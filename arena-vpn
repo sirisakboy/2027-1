@@ -1,0 +1,746 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  Arena VPN — CLI หลัก
+#  ออกแบบสำหรับ "VN บนคลาวด์ฟรี สำหรับงานพัฒนาโปรเจกต์ และใช้ยามฉุกเฉิน"
+#
+#  คำสั่งยอดนิยม
+#    sudo arena-vpn init [--preset gcp|oracle|aws|generic] [--portal]
+#    sudo arena-vpn peer add laptop            # สร้างอุปกรณ์ + ไฟล์เดียวจบ
+#    sudo arena-vpn peer qr laptop             # QR สแกนจากมือถือ
+#    sudo arena-vpn status                     # ดูสถานะรวม
+#    sudo arena-vpn doctor [--fix]             # ตรวจ/ซ่อมเมื่อต่อไม่ได้
+#    sudo arena-vpn portal open                # ลิงก์+รหัสพอร์ทัล
+#    sudo arena-vpn failover rotate 2          # เปิดพอร์ต SSH ฉุกเฉินใหม่
+#    sudo arena-vpn backup /root/vpn.tar.gz.enc
+# ==============================================================================
+set -uo pipefail
+
+AVPN_HOME="${AVPN_HOME:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}"
+export AVPN_HOME
+LIBDIR="$AVPN_HOME/lib"
+
+# shellcheck source=/dev/null
+source "$LIBDIR/common.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/peers.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/wg.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/ovpn.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/firewall.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/dns.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/failover.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/portal.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/doctor.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/backup.sh"
+
+JSON_MODE=0
+ASSUME_YES=0
+
+# ---------------- banner ----------------
+banner() {
+  [[ $JSON_MODE == 1 ]] && return
+  printf '%s' "$C_LIME"
+  cat <<'ART'
+
+    ▄▄▄       ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄
+   █   █      █     █ █       █       █      █
+   █   █ ▄▄▄  █▄▄▄▄▄█ █▄▄▄▄▄▄▄ █▄▄▄▄▄▄▄ █▄▄▄▄▄▄█
+   █   █      █   █   █       █       █      █
+    ▀▀▀       ▀   ▀▀  ▀▀▀▀▀▀▀ ▀▀▀▀▀▀▀ ▀▀▀▀▀▀▀
+ART
+  printf '%s' "$C_RESET"
+  printf '  %sV P N  ·  ฉุกเฉิน · เร็ว · เบา%s   %sv%s%s\n\n' "$C_DIM" "$C_RESET" "$C_DIM" "$AVPN_VERSION" "$C_RESET"
+}
+
+usage() {
+  cat <<EOF
+${C_BOLD}Arena VPN${C_RESET} — อุโมงค์ส่วนตัวบนคลาวด์ฟรี  v$AVPN_VERSION
+
+${C_BOLD}ติดตั้งครั้งแรก${C_RESET}
+  arena-vpn init [--preset gcp|oracle|aws|generic] [--portal] [--yes]
+      --preset   ปรับ MTU/พอร์ตให้เหมาะกับเจ้านั้น ๆ (gcp = MTU 1360)
+      --portal   เปิดพอร์ทัลเว็บจัดการอุปกรณ์ด้วย
+      --host X   ตั้งโดเมน หรือ IP ที่จะใช้ในไฟล์ client
+
+${C_BOLD}อุปกรณ์ (peers)${C_RESET}
+  arena-vpn peer add <ชื่อ> [--note "..."]   สร้างอุปกรณ์ + ไฟล์ .conf/.ovpn
+  arena-vpn peer list                        ดูรายการ + สถานะออนไลน์
+  arena-vpn peer qr <ชื่อ>                   แสดง QR (สแกนในแอป WireGuard)
+  arena-vpn peer show <ชื่อ>                 แสดงไฟล์ config ทั้งหมด
+  arena-vpn peer refresh <ชื่อ>              สร้างคีย์ใหม่ (ไฟล์เดิมใช้ไม่ได้)
+  arena-vpn peer revoke <ชื่อ>               เพิกถอนทันที (ยังกู้คืนได้)
+  arena-vpn peer delete <ชื่อ> --yes         ลบทิ้งถาวร
+  arena-vpn peer export <ชื่อ> <ไฟล์.zip>    รวมทุกไฟล์เป็น zip (ส่งให้คนอื่น)
+
+${C_BOLD}สถานะ / ซ่อม${C_RESET}
+  arena-vpn status                           สรุปสถานะทั้งหมด
+  arena-vpn doctor [--fix]                   ตรวจสุขภาพ / ซ่อมอัตโนมัติ
+  arena-vpn apply                            ใช้ค่าจาก config ทั้งหมดอีกครั้ง
+
+${C_BOLD}พอร์ทัลเว็บ${C_RESET}
+  arena-vpn portal open                      ลิงก์ + รหัสเข้าพอร์ทัล
+  arena-vpn portal reset-password            ตั้งรหัสใหม่
+  arena-vpn portal disable | enable          ปิด/เปิดพอร์ทัล
+
+${C_BOLD}ฉุกเฉิน${C_RESET}
+  arena-vpn failover status                  ดูชั้นฉุกเฉินทั้งหมด
+  arena-vpn failover rotate [n]              เปิด SSH พอร์ตสุ่มใหม่ n พอร์ต
+  arena-vpn failover disable                 ปิด SSH หลายพอร์ต (โหมดสงบ)
+  arena-vpn failover guide                   คู่มือกู้คืนผ่าน console
+
+${C_BOLD}สำรอง / ย้ายเครื่อง${C_RESET}
+  arena-vpn backup [ไฟล์]                    สำรองเข้ารหัส AES-256
+  arena-vpn restore <ไฟล์>                   กู้คืน (ย้ายเซิร์ฟเวอร์)
+  arena-vpn backup schedule                  ตั้งสำรองอัตโนมัติรายสัปดาห์
+
+${C_BOLD}ตั้งค่า${C_RESET}
+  arena-vpn config list | set KEY VALUE | get KEY
+  arena-vpn uninstall [--purge]              ถอนการติดตั้ง
+
+${C_DIM}เอกสารเต็ม: README.md · คู่มือ: docs/ · ตัวเลือก: --json สำหรับสคริปต์/API${C_RESET}
+EOF
+}
+
+# ---------------- argument helpers ----------------
+arg_value() { # arg_value <flag> "$@" → echo value หรือว่าง
+  local flag=$1; shift
+  local prev="" a
+  for a in "$@"; do
+    if [[ $prev == "$flag" ]]; then printf '%s' "$a"; return 0; fi
+    prev=$a
+  done
+  return 1
+}
+has_flag() {
+  local flag=$1; shift
+  local a
+  for a in "$@"; do [[ $a == "$flag" ]] && return 0; done
+  return 1
+}
+
+json_out() { printf '%s\n' "$1"; }
+
+# ---------------- commands ----------------
+cmd_init() {
+  local preset="" host="" portal=0
+  preset="$(arg_value --preset "$@" || true)"
+  host="$(arg_value --host "$@" || true)"
+  has_flag --portal "$@" && portal=1
+  has_flag --yes "$@" && ASSUME_YES=1
+  has_flag --no-portal "$@" && portal=0
+
+  require_root
+  step "เตรียมระบบ (ตรวจ OS / แพ็กเกจ)"
+
+  [[ -f /etc/os-release ]] || die "ตรวจ OS ไม่ได้ — รองรับ Debian/Ubuntu"
+  # shellcheck source=/dev/null
+  . /etc/os-release
+  case "${ID:-}" in
+    debian | ubuntu | raspbian) ok "OS: ${PRETTY_NAME:-$ID}" ;;
+    *) warn "ทดสอบกับ Debian/Ubuntu เท่านั้น (พบ ${PRETTY_NAME:-$ID}) — จะลองต่อ" ;;
+  esac
+
+  # แพ็กเกจพื้นฐาน
+  apt_update || die "apt update ไม่สำเร็จ"
+  apt_install ca-certificates curl iptables iproute2 openssl qrencode zip openssh-server unzip || true
+  apt_install wireguard-tools || die "ติดตั้ง wireguard-tools ไม่สำเร็จ"
+  apt_install openvpn || die "ติดตั้ง openvpn ไม่สำเร็จ"
+
+  # โหลดโมดูลที่ต้องใช้
+  modprobe tun 2>/dev/null || true
+  [[ -e /dev/net/tun ]] || die "ไม่พบ /dev/net/tun — คลาวด์ของท่านปิด TUN (OpenVPN ใช้ไม่ได้)"
+
+  mkdir -p "$AVPN_ETC" "$AVPN_PEERS_DIR" "$AVPN_STATE" "$AVPN_BACKUP_DIR"
+  chmod 700 "$AVPN_ETC" "$AVPN_PEERS_DIR"
+
+  # ตรวจจับคลาวด์ → ปรับค่าอัตโนมัติ
+  if [[ -z $preset ]]; then
+    preset="$(detect_cloud)"
+    [[ $preset == unknown ]] && preset="generic"
+  fi
+  step "ตั้งค่าเริ่มต้น (preset: $preset)"
+
+  local pub_ip
+  pub_ip="$(refresh_public_ip || true)"
+  [[ -n $pub_ip ]] && ok "Public IP: $pub_ip"
+
+  load_env
+  local mtu=$AVPN_MTU
+  local ov_port=$AVPN_OVPN_PORT
+  local wg_port=$AVPN_WG_PORT
+  case "$preset" in
+    gcp)
+      # GCP: cloud firewall เป็น "ingress rules" แยก, MTU ของ VM = 1460
+      mtu=1360
+      ov_port=443
+      pub_ip="${pub_ip:-}"
+      ;;
+    oracle)
+      mtu=1420
+      ;;
+    aws)
+      mtu=1420
+      ;;
+    generic)
+      mtu=1420
+      ;;
+  esac
+
+  # เขียน env (ไม่ทับค่าที่ผู้ใช้ตั้งไว้แล้ว)
+  [[ -f $AVPN_ENV_FILE ]] || : >"$AVPN_ENV_FILE"
+  chmod 600 "$AVPN_ENV_FILE"
+  local k v
+  _set_default() { grep -q "^$1=" "$AVPN_ENV_FILE" || printf '%s=%s\n' "$1" "$2" >>"$AVPN_ENV_FILE"; }
+  _set_default AVPN_MTU "$mtu"
+  _set_default AVPN_WG_PORT "$wg_port"
+  _set_default AVPN_OVPN_PORT "$ov_port"
+  _set_default AVPN_DNS_ENABLED "1"
+  _set_default AVPN_FALLBACK_ENABLED "1"
+  _set_default AVPN_BLOCK_IPV6 "1"
+  [[ -n $host ]] && env_set AVPN_PUBLIC_HOST "$host"
+  [[ -z $host && -n $pub_ip ]] && _set_default AVPN_PUBLIC_HOST ""
+
+  # --portal เปิดพอร์ทัล; --no-portal ปิด (เขียนลง env และจำไว้ใช้ทั้งรอบ)
+  if ((portal == 1)); then
+    env_set AVPN_PORTAL_ENABLED 1
+  elif has_flag --no-portal "$@"; then
+    env_set AVPN_PORTAL_ENABLED 0
+  fi
+  load_env
+  peers_init
+
+  step "สร้างคีย์ WireGuard"
+  wg_pkg_install
+  wg_ensure_keys
+
+  step "สร้าง CA + ใบรับรอง OpenVPN (EC P-256)"
+  ovpn_ca_init
+  ovpn_ensure_tlscrypt
+  ovpn_server_cert
+
+  # peer เริ่มต้น 1 ตัว — ใช้งานได้ทันทีหลังติดตั้ง
+  local first_peer
+  first_peer="me-$(hostname 2>/dev/null | tr -c 'a-z0-9-' '-' | cut -c1-12)"
+  first_peer="${first_peer%-}"
+  valid_peer_name "$first_peer" || first_peer="laptop"
+  if ! peer_exists "$first_peer"; then
+    step "สร้างอุปกรณ์แรก: $first_peer"
+    peer_add_internal "$first_peer" "" >/dev/null
+  fi
+
+  # ระบบเครือข่าย
+  step "ตั้งค่าเครือข่าย (forwarding / NAT / firewall)"
+  ip_forward_apply
+  ipv6_apply
+  fw_apply
+  fw_save
+
+  step "เปิดบริการ"
+  wg_apply
+  ovpn_apply
+  is_true "$AVPN_DNS_ENABLED" && dns_apply
+  if is_true "$AVPN_FALLBACK_ENABLED"; then
+    failover_apply >/dev/null 2>&1 || warn "ชั้นฉุกเฉิน SSH ยังไม่สมบูรณ์ — รัน: sudo arena-vpn failover enable"
+  fi
+  failover_install_rotate_bin
+
+  if is_true "$AVPN_PORTAL_ENABLED"; then
+    step "เปิดพอร์ทัลเว็บ"
+    portal_apply
+  fi
+
+  # ติดตั้ง CLI ไปยัง path มาตรฐาน + cron ตรวจ IP ทุกชั่วโมง
+  cmd_install_self >/dev/null 2>&1 || true
+  sys_write /etc/cron.d/arena-vpn 644 <<'EOF'
+# Arena VPN: ตรวจ public IP ทุกชั่วโมง — เปลี่ยนแล้วสร้างไฟล์ client ใหม่อัตโนมัติ
+17 * * * * root /usr/local/bin/arena-vpn internal watch-ip >/dev/null 2>&1
+EOF
+
+  # สรุปผล
+  summarize
+}
+
+summarize() {
+  load_env
+  local host
+  host="$(public_host 2>/dev/null || echo 'ยังไม่ทราบ IP')"
+  printf '\n%s╭─────────────────────────────────────────────╮%s\n' "$C_LIME" "$C_RESET"
+  printf '%s│  ติดตั้งเสร็จแล้ว — พร้อมใช้งาน                │%s\n' "$C_LIME" "$C_RESET"
+  printf '%s╰─────────────────────────────────────────────╯%s\n\n' "$C_LIME" "$C_RESET"
+  printf '  Endpoint      : %s%s%s\n' "$C_BOLD" "$host" "$C_RESET"
+  printf '  WireGuard     : UDP %s\n' "$AVPN_WG_PORT"
+  printf '  OpenVPN       : TCP %s (+UDP %s)\n' "$AVPN_OVPN_PORT" "$AVPN_OVPN_PORT"
+  if is_true "$AVPN_PORTAL_ENABLED"; then
+    printf '  พอร์ทัล         : %s\n' "$(portal_url)"
+    printf '  รหัสพอร์ทัล     : %s\n' "$(portal_credentials | tr '\n' ' ')"
+  fi
+  printf '\n  %sขั้นต่อไป:%s\n' "$C_BOLD" "$C_RESET"
+  printf '   1) sudo arena-vpn peer list            → ดูอุปกรณ์\n'
+  printf '   2) sudo arena-vpn peer qr <ชื่อ>       → สแกนจากมือถือ\n'
+  printf '   3) sudo arena-vpn status               → ตรวจสถานะ\n'
+  printf '\n  %sสำคัญ:%s เปิดพอร์ตบนไฟร์วอลล์ของคลาวด์ด้วย (UDP %s, TCP %s)\n' "$C_YELLOW" "$C_RESET" "$AVPN_WG_PORT" "$AVPN_OVPN_PORT"
+  printf '  รายละเอียดตามผู้ให้บริการ: docs/03-platforms.md\n\n'
+}
+
+# ---------------- peers ----------------
+peer_add_internal() { # <name> <note> — สร้างคีย์ + ลงทะเบียน (ใช้ซ้ำจาก portal/init)
+  local name=$1 note=${2:-} rc=0
+  peer_new "$name" "$note" >/dev/null || rc=$?
+  case $rc in
+    0) ;;
+    2) die "ชื่ออุปกรณ์ไม่ถูกต้อง (a-z 0-9 _ - ความยาว ≤32)" ;;
+    3) die "มีอุปกรณ์ชื่อ '$name' อยู่แล้ว" ;;
+    4) die "IP ในอุโมงค์เต็มแล้ว" ;;
+    5) die "ออกใบรับรอง OpenVPN ไม่สำเร็จ (ดู /var/log/arena-vpn หรือรัน doctor)" ;;
+    6) die "สร้างคีย์เซิร์ฟเวอร์ไม่ได้ — รัน: sudo arena-vpn init" ;;
+    *) die "สร้างอุปกรณ์ไม่สำเร็จ (รหัส $rc)" ;;
+  esac
+  peer_render_files "$name"
+}
+
+# เขียนไฟล์ .conf/.ovpn ของอุปกรณ์ (ใช้ซ้ำหลัง IP เปลี่ยน/สร้างคีย์ใหม่)
+peer_regen_files() { peer_render_files "$1"; }
+
+cmd_peer() {
+  local sub=${1:-list}; shift || true
+  case "$sub" in
+    add)
+      require_root
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer add <ชื่อ>"
+      shift
+      local note=""
+      note="$(arg_value --note "$@" || true)"
+      load_env
+      [[ $(peer_count) -lt $AVPN_MAX_CLIENTS ]] || die "เต็มจำนวนแล้ว (AVPN_MAX_CLIENTS=$AVPN_MAX_CLIENTS)"
+      step "สร้างอุปกรณ์: $name"
+      peer_add_internal "$name" "$note"
+      wg_apply >/dev/null
+      ovpn_apply >/dev/null 2>&1 || warn "อัปเดต OpenVPN ไม่สำเร็จ (ไม่กระทบ WireGuard)"
+      local ip
+      ip="$(peer_field "$name" 2)"
+      if [[ $JSON_MODE == 1 ]]; then
+        json_out "{\"ok\":true,\"name\":\"$(json_escape "$name")\",\"ip\":\"$ip\"}"
+      else
+        ok "สร้างแล้ว: $name → $ip"
+        printf '   ไฟล์: %s/%s.conf\n' "$AVPN_PEERS_DIR/$name" "$name"
+        printf '   ไฟล์: %s/%s-tcp.ovpn (สำรอง)\n' "$AVPN_PEERS_DIR/$name" "$name"
+        printf '   %sส่งไฟล์ให้ปลอดภัย — ใครถือไฟล์นี้ = เข้าเน็ตผ่านเครื่องคุณได้%s\n' "$C_YELLOW" "$C_RESET"
+      fi
+      ;;
+    list)
+      load_env
+      peers_init
+      local name ip
+      if [[ $JSON_MODE == 1 ]]; then
+        local out="[" first=1
+        while IFS=$'\t' read -r name ip _; do
+          [[ -z $name ]] && continue
+          ((first)) || out+=","
+          first=0
+          out+="{\"name\":\"$name\",\"ip\":\"$ip\"}"
+        done < <(peer_any_rows)
+        json_out "$out]"
+        return
+      fi
+      printf '\n  %-20s %-14s %-12s %-14s %10s %10s\n' "อุปกรณ์" "IP ในอุโมงค์" "สถานะ" "ออนไลน์" "รับ" "ส่ง"
+      printf '  %s\n' "──────────────────────────────────────────────────────────────────────────────"
+      local live
+      live="$(wg_live_peers 2>/dev/null)"
+      while IFS=$'\t' read -r name ip pub _ _ _ created status note; do
+        [[ -z $name ]] && continue
+        local line st_txt hs=0 rx=0 tx=0 on_txt="—"
+        line="$(printf '%s' "$live" | awk -F'\t' -v n="$name" '$1==n{print; exit}')"
+        if [[ -n $line ]]; then
+          hs="$(printf '%s' "$line" | cut -f3)"
+          rx="$(printf '%s' "$line" | cut -f4)"
+          tx="$(printf '%s' "$line" | cut -f5)"
+        fi
+        [[ $hs =~ ^[0-9]+$ ]] || hs=0
+        ((hs > 0)) && (($(date +%s) - hs < 180)) && on_txt="ออนไลน์"
+        if [[ $status == active ]]; then
+          st_txt="ใช้งาน"
+          printf '  %-20s %-14s %s%-12s%s %-14s %10s %10s\n' "$name" "$ip" "$C_LIME" "$st_txt" "$C_RESET" "$on_txt" "$(human_bytes "$rx")" "$(human_bytes "$tx")"
+        else
+          st_txt="เพิกถอน"
+          printf '  %-20s %-14s %s%-12s%s %-14s %10s %10s\n' "$name" "$ip" "$C_RED" "$st_txt" "$C_RESET" "$on_txt" "$(human_bytes "$rx")" "$(human_bytes "$tx")"
+        fi
+      done < <(peer_any_rows)
+      printf '\n'
+      ;;
+    qr)
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer qr <ชื่อ>"
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      peer_regen_files "$name"
+      local f="$AVPN_PEERS_DIR/$name/$name.conf"
+      info "QR นี้มีคีย์ส่วนตัว — ห้ามถ่ายรูป/แชร์ (สแกนได้ตรงในแอป WireGuard)"
+      show_qr "$f"
+      printf '\nไฟล์: %s\n' "$f"
+      ;;
+    show)
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer show <ชื่อ>"
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      peer_regen_files "$name"
+      cat "$AVPN_PEERS_DIR/$name/$name.conf"
+      ;;
+    refresh)
+      require_root
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer refresh <ชื่อ>"
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      local ip pub
+      ip="$(peer_field "$name" 2)"
+      pub="$(wg_gen_peer_keys "$name")"
+      peer_set_field "$name" 3 "$pub"
+      peer_set_field "$name" 8 active
+      peer_regen_files "$name"
+      wg_apply >/dev/null
+      ok "สร้างคีย์ใหม่ให้ $name แล้ว — ไฟล์เดิมใช้ไม่ได้"
+      ;;
+    revoke)
+      require_root
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer revoke <ชื่อ>"
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      local pub cn
+      pub="$(peer_field "$name" 3)"
+      cn="$(peer_field "$name" 5)"
+      peer_revoke "$name"
+      wg_remove_peer_live "$pub"
+      wg_apply >/dev/null
+      ovpn_revoke_cert "$cn" >/dev/null 2>&1 || true
+      ovpn_write_ccd
+      ovpn_apply >/dev/null 2>&1 || true
+      fw_apply >/dev/null 2>&1 || true
+      ok "เพิกถอน $name แล้ว — เครื่องนี้ต่อ VPN ไม่ได้ทันที"
+      ;;
+    delete)
+      require_root
+      local name=${1:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer delete <ชื่อ> --yes"
+      has_flag --yes "$@" && ASSUME_YES=1
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      confirm "ลบ '$name' ถาวร?" || die "ยกเลิก"
+      local pub cn
+      pub="$(peer_field "$name" 3)"
+      cn="$(peer_field "$name" 5)"
+      wg_remove_peer_live "$pub"
+      ovpn_revoke_cert "$cn" >/dev/null 2>&1 || true
+      rm -f "$OVPN_CA_DIR/issued/$cn.crt" "$OVPN_CA_DIR/issued/$cn.key"
+      peer_delete "$name"
+      wg_apply >/dev/null
+      ovpn_write_ccd
+      ovpn_apply >/dev/null 2>&1 || true
+      ok "ลบ $name แล้ว"
+      ;;
+    export)
+      local name=${1:-} out=${2:-}
+      [[ -n $name ]] || die "ระบุชื่อ: arena-vpn peer export <ชื่อ> <ไฟล์.zip>"
+      [[ -n $out ]] || out="./$name-arena-vpn.zip"
+      load_env
+      peer_exists "$name" || die "ไม่พบอุปกรณ์ '$name'"
+      peer_regen_files "$name"
+      mkdir -p "$(dirname -- "$out")"
+      local pass
+      pass="$(gen_password 12)"
+      if (cd "$AVPN_PEERS_DIR/$name" && zip -q -j -P "$pass" "$out" ./*); then
+        chmod 600 "$out"
+        ok "รวมไฟล์อุปกรณ์เป็น: $out (เข้ารหัส zip แล้ว)"
+        warn "รหัสไฟล์ zip: $pass  — ส่งรหัสผ่านทางอื่น ไม่ใช่ทางเดียวกับไฟล์"
+      else
+        die "สร้าง zip ไม่สำเร็จ (ติดตั้ง zip แล้วยัง?)"
+      fi
+      ;;
+    *)
+      die "ไม่รู้จัก: peer $sub (add|list|qr|show|refresh|revoke|delete|export)"
+      ;;
+  esac
+}
+
+# ---------------- status ----------------
+cmd_status() {
+  load_env
+  local host wg ov dns fw
+  host="$(public_host 2>/dev/null || echo unknown)"
+  if systemd_available; then
+    wg="$(wg_status_summary)"
+    ov="$(ovpn_status_summary)"
+    if is_true "${AVPN_DNS_ENABLED:-1}" && systemd_available && svc_active dnsmasq; then dns="up"; else dns="down"; fi
+    if iptables -t nat -S POSTROUTING 2>/dev/null | grep -q MASQUERADE; then fw="up"; else fw="down"; fi
+  else
+    wg="n/a"; ov="n/a"; dns="n/a"; fw="n/a"
+  fi
+  if [[ $JSON_MODE == 1 ]]; then
+    json_out "{\"host\":\"$(json_escape "$host")\",\"version\":\"$AVPN_VERSION\",\"wireguard\":\"$(json_escape "$wg")\",\"openvpn\":\"$(json_escape "$ov")\",\"dns\":\"$dns\",\"firewall\":\"$fw\",\"peers\":$(peer_count)}"
+    return
+  fi
+  printf '\n%sArena VPN v%s%s  %s(%s)%s\n' "$C_BOLD" "$AVPN_VERSION" "$C_RESET" "$C_DIM" "$host" "$C_RESET"
+  printf '%s\n' "─────────────────────────────────────────────"
+  _line() { printf '  %-14s %b\n' "$1" "$2"; }
+  case "$wg" in up:*) _line "WireGuard" "${C_GREEN}● ${wg#up:}${C_RESET}" ;; *) _line "WireGuard" "${C_RED}● ${wg}${C_RESET}" ;; esac
+  _line "OpenVPN" "$ov"
+  _line "DNS" "$([[ $dns == up ]] && printf '%s● up%s' "$C_GREEN" "$C_RESET" || printf '%s● %s%s' "$C_YELLOW" "$dns" "$C_RESET")"
+  _line "ไฟร์วอลล์/NAT" "$([[ $fw == up ]] && printf '%s● up%s' "$C_GREEN" "$C_RESET" || printf '%s● %s%s' "$C_RED" "$fw" "$C_RESET")"
+  _line "อุปกรณ์" "$(peer_count) active / max $AVPN_MAX_CLIENTS"
+  printf '\n'
+  cmd_peer list
+}
+
+# ---------------- apply ----------------
+apply_all() {
+  load_env
+  peers_init
+  ip_forward_apply
+  ipv6_apply
+  wg_apply
+  ovpn_apply
+  is_true "$AVPN_DNS_ENABLED" && dns_apply
+  is_true "$AVPN_FALLBACK_ENABLED" && failover_apply >/dev/null 2>&1 || true
+  if is_true "$AVPN_PORTAL_ENABLED"; then
+    portal_apply
+  else
+    systemd_available && { svc disable --now arena-vpn-portal; svc disable --now arena-vpn-portal-tls; }
+  fi
+  fw_apply
+  fw_save
+  # อัปเดตไฟล์ client ทุกตัว (เผื่อ IP/พอร์ตเปลี่ยน)
+  local name
+  while IFS=$'\t' read -r name _; do
+    [[ -n $name ]] && peer_regen_files "$name"
+  done < <(peer_active_rows)
+  ok "ใช้การตั้งค่าทั้งหมดแล้ว"
+}
+
+cmd_apply() { require_root; load_env; step "ใช้การตั้งค่า"; apply_all; }
+
+# ---------------- internal ----------------
+cmd_internal() {
+  local sub=${1:-}; shift || true
+  case "$sub" in
+    firewall-up)
+      load_env
+      ip_forward_apply
+      fw_apply
+      ;;
+    watch-ip)
+      load_env
+      local old new
+      old="$(cat "$AVPN_STATE/public-ip" 2>/dev/null || true)"
+      new="$(refresh_public_ip 2>/dev/null || true)"
+      if [[ -n $new && $old != "$new" ]]; then
+        logger -t arena-vpn "public IP changed $old -> $new; regenerating client files"
+        peer_refresh_all
+        # แจ้งเตือนผ่าน webhook ถ้าตั้งไว้
+        if [[ -n ${AVPN_ALERT_WEBHOOK:-} ]]; then
+          curl -fsS -m 5 -X POST -H 'Content-Type: application/json' \
+            --data "{\"text\":\"Arena VPN: public IP เปลี่ยนเป็น $new — ดาวน์โหลดไฟล์ใหม่ที่พอร์ทัล\"}" \
+            "$AVPN_ALERT_WEBHOOK" >/dev/null 2>&1 || true
+        fi
+      fi
+      ;;
+    *) die "internal: ไม่รู้จัก '$sub'" ;;
+  esac
+}
+
+# ---------------- config ----------------
+cmd_config() {
+  local sub=${1:-list}; shift || true
+  load_env
+  case "$sub" in
+    list)
+      printf '\n%s%s%s\n' "$C_DIM" "$AVPN_ENV_FILE" "$C_RESET"
+      grep -v '^[[:space:]]*#' "$AVPN_ENV_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | sed 's/^/  /' || true
+      printf '\n'
+      ;;
+    get)
+      local k=${1:-}
+      [[ -n $k ]] || die "ระบุ KEY"
+      printf '%s\n' "${!k:-}"
+      ;;
+    set)
+      require_root
+      local k=${1:-} v=${2:-}
+      [[ -n $k ]] || die "ระบุ KEY VALUE"
+      case "$k" in
+        AVPN_PORTAL_PASS) env_set "$k" "$v"; portal_reset_password >/dev/null; ok "ตั้งรหัสพอร์ทัลใหม่แล้ว" ;;
+        *) env_set "$k" "$v"; ok "ตั้ง $k = $v (ใช้: sudo arena-vpn apply)" ;;
+      esac
+      ;;
+    *) die "config: list|get|set" ;;
+  esac
+}
+
+# ---------------- portal ----------------
+cmd_portal() {
+  local sub=${1:-open}
+  case "$sub" in
+    open)
+      load_env
+      is_true "${AVPN_PORTAL_ENABLED:-1}" || die "พอร์ทัลปิดอยู่ — เปิด: sudo arena-vpn portal enable"
+      printf '\n%sพอร์ทัลเว็บ%s\n' "$C_BOLD" "$C_RESET"
+      printf '  URL  : %s%s%s\n' "$C_CYAN" "$(portal_url)" "$C_RESET"
+      printf '  %s\n' "$(portal_credentials)"
+      [[ -f "${AVPN_ETC}/portal-tls/portal.crt" ]] &&
+        printf '  ใบรับรอง self-signed — เบราว์เซอร์จะเตือนครั้งแรก (กด Advanced → Proceed)\n'
+      printf '\n'
+      ;;
+    url) portal_url; printf '\n' ;;
+    reset-password) require_root; portal_reset_password ;;
+    enable) require_root; env_set AVPN_PORTAL_ENABLED 1; load_env; portal_apply ;;
+    disable) require_root; env_set AVPN_PORTAL_ENABLED 0; load_env; systemd_available && { svc disable --now arena-vpn-portal; svc disable --now arena-vpn-portal-tls; }; ok "ปิดพอร์ทัลแล้ว" ;;
+    *) die "portal: open|url|reset-password|enable|disable" ;;
+  esac
+}
+
+# ---------------- backup ----------------
+cmd_backup() {
+  require_root
+  load_env
+  if [[ ${1:-} == schedule ]]; then backup_schedule; return; fi
+  backup_create "${1:-}"
+}
+
+cmd_restore() {
+  require_root
+  load_env
+  has_flag --yes "$@" && ASSUME_YES=1
+  export ASSUME_YES
+  backup_restore "${1:-}"
+}
+
+# ---------------- uninstall ----------------
+# ติดตั้ง CLI + ไลบรารีลง /usr/local (ใช้โดย init และ install-self)
+cmd_install_self() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || return 0
+  install -m 755 "$AVPN_HOME/arena-vpn" /usr/local/bin/arena-vpn 2>/dev/null || return 1
+  mkdir -p /usr/local/lib/arena-vpn 2>/dev/null || return 0
+  cp -a "$AVPN_HOME/lib" "$AVPN_HOME/portal" "$AVPN_HOME/VERSION" /usr/local/lib/arena-vpn/ 2>/dev/null || true
+  [[ -d "$AVPN_HOME/docs" ]] && cp -a "$AVPN_HOME/docs" /usr/local/lib/arena-vpn/ 2>/dev/null || true
+  return 0
+}
+
+cmd_uninstall() {
+  require_root
+  load_env
+  local purge=0
+  has_flag --purge "$@" && purge=1
+  has_flag --yes "$@" && ASSUME_YES=1
+  warn "จะลบ: service ทั้งหมด, กฎไฟร์วอลล์ของ Arena VPN, ไฟล์ config ในเครื่อง"
+  [[ $purge == 1 ]] && warn "พร้อมลบข้อมูลทั้งหมด (คีย์/peers) — กู้คืนไม่ได้ถ้าไม่มี backup"
+  confirm "ถอนการติดตั้ง?" || die "ยกเลิก"
+
+  systemd_available && {
+    local u
+    for u in arena-vpn-portal-tls arena-vpn-portal arena-vpn-firewall "wg-quick@$AVPN_WG_IF" openvpn-server@ovpn-tcp openvpn-server@ovpn-udp arena-vpn-backup.timer; do
+      svc disable --now "$u" 2>/dev/null || true
+    done
+    rm -f /etc/systemd/system/arena-vpn-*.service /etc/systemd/system/arena-vpn-*.timer
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  }
+  rm -f /etc/cron.d/arena-vpn
+  rm -f /etc/sysctl.d/99-arena-vpn-*.conf
+  rm -f "$SSHD_DROPIN"
+  rm -f "$FW_SVC_UNIT"
+  rm -rf /etc/stunnel/arena-vpn.conf
+  rm -rf /var/lib/arena-vpn/www
+  rm -f /etc/wireguard/"$AVPN_WG_IF".conf
+  rm -rf "$OVPN_SERVER_DIR"
+  rm -f "$OVPN_DIR/tls-crypt.key" "$OVPN_DIR/crl.pem"
+  rm -rf /etc/dnsmasq.d/arena-vpn.conf
+  rm -f /usr/local/bin/arena-vpn "$ROTATE_BIN"
+  rm -rf /usr/local/lib/arena-vpn
+
+  if [[ $purge == 1 ]]; then
+    rm -rf "$AVPN_ETC" "$AVPN_STATE"
+    ok "ลบข้อมูลทั้งหมดแล้ว"
+  else
+    ok "ถอนการติดตั้งแล้ว — ข้อมูลยังอยู่ที่ $AVPN_ETC (ลบด้วย --purge)"
+  fi
+}
+
+# ---------------- main ----------------
+main() {
+  # flag ระดับบนสุด
+  local args=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --json) JSON_MODE=1 ;;
+      --yes | -y) ASSUME_YES=1; args+=("$a") ;;
+      --help | -h) usage; exit 0 ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  set -- "${args[@]}"
+
+  local cmd=${1:-}
+  [[ $# -gt 0 ]] && shift || true
+
+  case "$cmd" in
+    "" | help | -h | --help) banner; usage ;;
+    version | --version) printf 'arena-vpn %s\n' "$AVPN_VERSION" ;;
+    init) banner; cmd_init "$@" ;;
+    peer) cmd_peer "$@" ;;
+    status) cmd_status ;;
+    doctor)
+      local fix=0
+      has_flag --fix "$@" && fix=1
+      doctor_checks
+      if [[ $JSON_MODE == 1 ]]; then
+        local out="[" first=1 r
+        for r in "${DOC_RESULTS[@]}"; do
+          ((first)) || out+=","
+          first=0
+          out+="{\"level\":\"${r%%|*}\",\"id\":\"$(echo "${r#*|}" | cut -d'|' -f1)\",\"message\":\"$(json_escape "$(echo "$r" | cut -d'|' -f3)")\"}"
+        done
+        json_out "$out]"
+      else
+        doctor_print || true
+      fi
+      if ((fix)); then
+        require_root
+        doctor_fix
+      fi
+      ;;
+    apply) cmd_apply ;;
+    internal) cmd_internal "$@" ;;
+    config) cmd_config "$@" ;;
+    portal) cmd_portal "$@" ;;
+    failover)
+      local sub=${1:-status}; shift || true
+      case "$sub" in
+        status) failover_status ;;
+        rotate) require_root; load_env; failover_rotate "${1:-1}" ;;
+        disable) require_root; failover_disable ;;
+        enable) require_root; load_env; failover_apply ;;
+        reset) require_root; load_env; failover_reset_ports ;;
+        guide) failover_emergency_guide ;;
+        *) die "failover: status|rotate|disable|enable|reset|guide" ;;
+      esac
+      ;;
+    backup) cmd_backup "$@" ;;
+    restore) cmd_restore "$@" ;;
+    uninstall) banner; cmd_uninstall "$@" ;;
+    install-self)
+      cmd_install_self
+      ok "ติดตั้งตัว CLI ไปที่ /usr/local/bin/arena-vpn แล้ว"
+      ;;
+    *) err "ไม่รู้จักคำสั่ง '$cmd'"; usage; exit 1 ;;
+  esac
+}
+
+main "$@"

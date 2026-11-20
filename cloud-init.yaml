@@ -1,0 +1,31 @@
+#cloud-config
+# ==============================================================================
+#  Arena VPN — ติดตั้งอัตโนมัติตอนสร้าง VM (user-data / cloud-init)
+#
+#  วิธีใช้:
+#    1) แก้ `host:` ด้านล่างเป็นโดเมนหรือ IP ของเครื่องนี้ (ปล่อยว่างได้ = ใช้ IP)
+#    2) วางเนื้อหาไฟล์นี้ในช่อง "User data" (GCP/AWS) หรือ "Cloud-init script" (Oracle)
+#    3) สร้าง VM → รอ 3–5 นาที → เปิด https://<IP>:8443
+#       รหัสพอร์ทัลอยู่ใน /root/arena-vpn-portal.txt (ดูผ่าน SSH)
+#
+#  ⚠️ ต้องเปิดพอร์ตที่ cloud firewall ก่อน (UDP 51820, TCP 443, TCP 8443)
+# ==============================================================================
+
+write_files:
+  - path: /etc/arena-vpn-install.env
+    permissions: "0600"
+    content: |
+      # ตั้งค่าก่อนติดตั้ง (เว้นว่าง = ให้สคริปต์ตรวจเอง)
+      AVPN_PUBLIC_HOST=
+      AVPN_PORTAL=1
+
+runcmd:
+  - [ bash, -c, "echo 'Arena VPN: เริ่มติดตั้งบนคลาวด์…' | logger -t arena-vpn" ]
+  - [ apt-get, update, -qq ]
+  - [ apt-get, install, -y, -qq, git, curl, ca-certificates ]
+  - [ bash, -c, "git clone --depth 1 https://github.com/sirisakboy/2027-1.git /opt/arena-vpn-src || true" ]
+  - [ bash, -c, "source /etc/arena-vpn-install.env; cd /opt/arena-vpn-src && HOSTARG=''; [ -n \"$AVPN_PUBLIC_HOST\" ] && HOSTARG=\"--host $AVPN_PUBLIC_HOST\"; PORTALARG=''; [ \"$AVPN_PORTAL\" = 1 ] && PORTALARG=--portal; ./arena-vpn init $HOSTARG $PORTALARG --yes > /var/log/arena-vpn-install.log 2>&1" ]
+  - [ bash, -c, "arena-vpn portal open > /root/arena-vpn-portal.txt 2>&1; arena-vpn peer list >> /root/arena-vpn-portal.txt 2>&1" ]
+  - [ bash, -c, "echo 'Arena VPN: ติดตั้งเสร็จ — ดูรายละเอียดใน /root/arena-vpn-portal.txt' | logger -t arena-vpn" ]
+
+final_message: "Arena VPN พร้อมใช้งาน — ตรวจสอบที่ /root/arena-vpn-portal.txt หรือ https://<IP>:8443 (รออีก ~1 นาทีถ้ายังไม่ขึ้น)"

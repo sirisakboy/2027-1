@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Arena VPN — ศูนย์ควบคุม</title>
+<style>
+  :root{
+    --bg:#0b0d10; --bg2:#11151a; --card:#151a21; --line:#232b36; --line2:#2e3947;
+    --txt:#e8edf3; --dim:#8b97a8; --dim2:#5f6b7c;
+    --lime:#c6f24e; --lime-d:#9fd420; --amber:#f5b544; --red:#ff6b6b; --blue:#6fb3ff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Sarabun,"Noto Sans Thai",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  body{min-height:100vh;background-image:radial-gradient(900px 500px at 85% -10%,rgba(198,242,78,.08),transparent 60%),radial-gradient(700px 400px at -10% 110%,rgba(111,179,255,.06),transparent 60%)}
+  a{color:var(--lime);text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 20px 64px}
+  header{display:flex;align-items:center;gap:14px;padding:6px 0 22px}
+  .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(145deg,var(--lime),var(--lime-d));display:grid;place-items:center;color:#0b0d10;font-weight:800;box-shadow:0 6px 24px rgba(198,242,78,.25)}
+  .brand h1{font-size:17px;margin:0;letter-spacing:.2px;font-weight:650}
+  .brand p{margin:2px 0 0;font-size:12.5px;color:var(--dim)}
+  .spacer{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--bg2);color:var(--dim);font-family:var(--mono)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim2)}
+  .dot.on{background:var(--lime);box-shadow:0 0 0 3px rgba(198,242,78,.15)}
+  .dot.warn{background:var(--amber);box-shadow:0 0 0 3px rgba(245,181,68,.15)}
+  .dot.off{background:var(--red);box-shadow:0 0 0 3px rgba(255,107,107,.15)}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:linear-gradient(180deg,var(--card),var(--bg2));border:1px solid var(--line);border-radius:14px;padding:14px 15px}
+  .stat .k{font-size:11.5px;color:var(--dim2);letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+  .stat .v{font-size:20px;margin-top:6px;font-weight:650;font-family:var(--mono)}
+  .stat .s{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .row{display:grid;grid-template-columns:1.55fr .9fr;gap:14px;margin-top:14px}
+  @media(max-width:900px){.row{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .card h2{margin:0;padding:14px 16px;font-size:13.5px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;font-weight:650;letter-spacing:.2px}
+  .card h2 .tag{font-size:10.5px;font-family:var(--mono);color:var(--dim2);border:1px solid var(--line);padding:2px 7px;border-radius:6px;font-weight:500}
+  .add{display:flex;gap:8px;padding:13px 14px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .add input{flex:1;background:#0d1116;border:1px solid var(--line2);color:var(--txt);border-radius:9px;padding:10px 12px;font-size:13.5px;font-family:var(--mono);outline:none}
+  .add input:focus{border-color:var(--lime);box-shadow:0 0 0 3px rgba(198,242,78,.12)}
+  .btn{cursor:pointer;border:none;border-radius:9px;padding:10px 15px;font-size:13px;font-weight:650;font-family:var(--sans);background:var(--lime);color:#0b0d10;transition:.15s;white-space:nowrap}
+  .btn:hover{background:var(--lime-d)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--txt)}
+  .btn.ghost:hover{border-color:var(--dim);background:rgba(255,255,255,.03)}
+  .btn.mini{padding:6px 10px;font-size:11.5px;border-radius:7px}
+  .btn.danger{color:var(--red);border-color:rgba(255,107,107,.25);background:transparent}
+  .btn.danger:hover{background:rgba(255,107,107,.08)}
+  .peer{padding:13px 14px;border-bottom:1px solid var(--line)}
+  .peer:last-child{border-bottom:none}
+  .peer .top{display:flex;align-items:center;gap:10px}
+  .peer .nm{font-weight:650;font-size:14px;letter-spacing:.2px}
+  .peer .ip{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .peer .meta{display:flex;gap:14px;color:var(--dim2);font-size:11.5px;margin-top:6px;font-family:var(--mono)}
+  .peer .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .badge{font-size:10.5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line2);color:var(--dim);font-weight:600}
+  .badge.active{color:var(--lime);border-color:rgba(198,242,78,.3);background:rgba(198,242,78,.07)}
+  .badge.revoked{color:var(--red);border-color:rgba(255,107,107,.25);background:rgba(255,107,107,.06)}
+  .badge.online{color:var(--blue);border-color:rgba(111,179,255,.3);background:rgba(111,179,255,.07)}
+  .steps{padding:6px 16px 16px}
+  .step{display:flex;gap:12px;padding:12px 0;border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:none}
+  .step .n{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:rgba(198,242,78,.1);color:var(--lime);display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:700;margin-top:1px}
+  .step .t{font-size:13px;line-height:1.55}
+  .step .t small{display:block;color:var(--dim2);font-family:var(--mono);font-size:11.5px;margin-top:3px;word-break:break-all}
+  code,pre{font-family:var(--mono)}
+  pre{background:#0a0e12;border:1px solid var(--line);border-radius:10px;padding:11px 13px;overflow:auto;font-size:12px;line-height:1.6;margin:8px 0 0;color:#cfe3ff}
+  .lin{display:flex;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line);justify-content:space-between;align-items:center;font-size:13px}
+  .lin:last-child{border-bottom:none}
+  .lin b{font-weight:600}
+  .lin .v{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .empty{padding:26px 16px;text-align:center;color:var(--dim2);font-size:13px}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#1b2430;border:1px solid var(--line2);color:var(--txt);padding:11px 17px;border-radius:11px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:50;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{border-color:rgba(255,107,107,.4)}
+  dialog{border:1px solid var(--line2);background:var(--card);color:var(--txt);border-radius:16px;padding:0;max-width:440px;width:calc(100% - 32px)}
+  dialog::backdrop{background:rgba(0,0,0,.65);backdrop-filter:blur(3px)}
+  dialog .h{padding:15px 17px;border-bottom:1px solid var(--line);font-weight:650;font-size:14px}
+  dialog .b{padding:15px 17px;font-size:13px;line-height:1.6;color:var(--dim)}
+  dialog .f{padding:13px 17px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  footer{margin-top:26px;color:var(--dim2);font-size:11.5px;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between}
+  .qrbox{background:#fff;border-radius:12px;padding:12px;display:inline-block;margin-top:8px}
+  .mono{font-family:var(--mono)}
+  .muted{color:var(--dim2)}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);font-family:var(--mono)}
+  .spin{width:11px;height:11px;border:2px solid var(--line2);border-top-color:var(--lime);border-radius:50%;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">A</div>
+    <div class="brand">
+      <h1>Arena VPN <span class="pill" id="ver" style="margin-left:6px">v—</span></h1>
+      <p>ศูนย์ควบคุมอุโมงค์ส่วนตัว — ฉุกเฉิน · เร็ว · เบา</p>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill" id="hostPill"><span class="dot"></span><span id="hostName">—</span></span>
+  </header>
+
+  <div class="grid">
+    <div class="stat"><div class="k">WireGuard</div><div class="v" id="sWg">—</div><div class="s" id="sWgPort">UDP</div></div>
+    <div class="stat"><div class="k">OpenVPN</div><div class="v" id="sOv">—</div><div class="s" id="sOvPort">TCP fallback</div></div>
+    <div class="stat"><div class="k">อุปกรณ์ทั้งหมด</div><div class="v" id="sPeers">0</div><div class="s" id="sOnline">ออนไลน์ 0</div></div>
+    <div class="stat"><div class="k">DNS / ไฟร์วอลล์</div><div class="v" id="sDns">—</div><div class="s" id="sFw">—</div></div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>อุปกรณ์ (Peers) <span class="tag" id="peerTag">0</span><span class="spacer"></span><span class="live" id="liveTag"><span class="spin"></span> สด</span></h2>
+      <form class="add" id="addForm" autocomplete="off">
+        <input id="nameInput" placeholder="ชื่ออุปกรณ์ เช่น laptop-boss" maxlength="32" pattern="[a-z0-9][a-z0-9_-]*" required>
+        <button class="btn" type="submit" id="addBtn">+ เพิ่มอุปกรณ์</button>
+      </form>
+      <div id="peerList"><div class="empty">ยังไม่มีอุปกรณ์ — เพิ่มเครื่องแรกด้านบน</div></div>
+    </div>
+
+    <div>
+      <div class="card" style="margin-bottom:14px">
+        <h2>เริ่มใช้งานใน 1 นาที</h2>
+        <div class="steps">
+          <div class="step"><div class="n">1</div><div class="t">สร้างอุปกรณ์ แล้วดาวน์โหลดไฟล์ <span class="mono">.conf</span><small>ตัวเลือกสำรอง: .ovpn สำหรับเครือข่ายที่บล็อก UDP</small></div></div>
+          <div class="step"><div class="n">2</div><div class="t">ติดตั้งแอป WireGuard แล้วนำเข้าไฟล์<small>Windows · macOS · iOS · Android · Termux (Linux)</small></div></div>
+          <div class="step"><div class="n">3</div><div class="t">เปิดสวิตช์ แล้วเช็กว่า IP เปลี่ยน<small>เปิด ip.sb หรือ whatismyipaddress.com เทียบก่อน/หลัง</small></div></div>
+          <div class="step"><div class="n">4</div><div class="t">จำทางสำรองไว้เสมอ<small>OpenVPN TCP 443 + SSH หลายพอร์ต = ทางเข้าฉุกเฉิน</small></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>เซิร์ฟเวอร์</h2>
+        <div class="lin"><b>Endpoint</b><span class="v" id="cHost">—</span></div>
+        <div class="lin"><b>WireGuard</b><span class="v" id="cWg">—</span></div>
+        <div class="lin"><b>OpenVPN</b><span class="v" id="cOv">—</span></div>
+        <div class="lin"><b>พอร์ทัล</b><span class="v" id="cPortal">—</span></div>
+        <div class="lin"><b>SSH</b><span class="v" id="cSsh">—</span></div>
+        <div class="lin"><b>จำนวนสูงสุด</b><span class="v" id="cMax">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>เส้นทางฉุกเฉิน <span class="tag">ถ้าท่อหลักล่ม</span></h2>
+    <div class="steps" id="emergency"><div class="empty">กำลังโหลด…</div></div>
+  </div>
+
+  <footer>
+    <span>Arena VPN · ไฟล์ config เป็นความลับระดับรหัสผ่าน — ห้ามแชร์</span>
+    <span class="mono" id="footVer">—</span>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="dlg">
+  <div class="h" id="dlgH">ยืนยัน</div>
+  <div class="b" id="dlgB"></div>
+  <div class="f"><button class="btn ghost" id="dlgNo">ยกเลิก</button><button class="btn danger" id="dlgYes">ยืนยัน</button></div>
+</dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const state = { peers: [], status: null, config: null };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (r.status === 401) { location.reload(); throw new Error("unauthorized"); }
+  const j = await r.json().catch(() => ({ ok: false, error: "คำตอบผิดรูป" }));
+  if (!r.ok || j.ok === false) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+function toast(msg, isErr) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => (t.className = "toast"), 3200);
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function bytes(b) {
+  b = Number(b || 0); const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (b >= 1024 && i < 4) { b /= 1024; i++; }
+  return (i === 0 ? b : b.toFixed(1)) + " " + u[i];
+}
+function ago(ts) {
+  if (!ts || ts <= 0) return "ยังไม่เคยเชื่อม";
+  const d = Math.max(0, Date.now() / 1000 - ts);
+  if (d < 60) return Math.round(d) + " วิที่แล้ว";
+  if (d < 3600) return Math.round(d / 60) + " นาทีที่แล้ว";
+  if (d < 86400) return Math.round(d / 3600) + " ชม.ที่แล้ว";
+  return Math.round(d / 86400) + " วันที่แล้ว";
+}
+function dotClass(ok, warnOnly) { return "dot " + (ok ? "on" : warnOnly ? "warn" : "off"); }
+
+function renderPeers() {
+  const list = $("#peerList");
+  $("#peerTag").textContent = state.peers.length;
+  if (!state.peers.length) {
+    list.innerHTML = '<div class="empty">ยังไม่มีอุปกรณ์ — เพิ่มเครื่องแรกด้านบน</div>';
+  } else {
+    list.innerHTML = state.peers.map(p => {
+      const isActive = p.status === "active";
+      const badge = isActive
+        ? `<span class="badge active">ใช้งาน</span>${p.online ? '<span class="badge online">ออนไลน์</span>' : ""}`
+        : '<span class="badge revoked">เพิกถอนแล้ว</span>';
+      const dl = isActive ? `
+        <a class="btn mini ghost" href="/api/download?id=${encodeURIComponent(p.name)}&type=wg">WireGuard</a>
+        <a class="btn mini ghost" href="/api/download?id=${encodeURIComponent(p.name)}&type=ovpn-tcp">OpenVPN TCP</a>
+        <a class="btn mini ghost" href="/api/download?id=${encodeURIComponent(p.name)}&type=ovpn-udp">OpenVPN UDP</a>
+        <button class="btn mini ghost" data-qr="${esc(p.name)}">QR</button>
+        <a class="btn mini ghost" href="/api/qr?id=${encodeURIComponent(p.name)}" target="_blank" rel="noopener">QR เต็มจอ</a>
+        <button class="btn mini danger" data-act="revoke" data-name="${esc(p.name)}">เพิกถอน</button>
+        <button class="btn mini danger" data-act="delete" data-name="${esc(p.name)}">ลบ</button>` : `
+        <button class="btn mini ghost" data-act="refresh" data-name="${esc(p.name)}">สร้างคีย์ใหม่</button>
+        <button class="btn mini danger" data-act="delete" data-name="${esc(p.name)}">ลบ</button>`;
+      return `<div class="peer">
+        <div class="top"><span class="nm">${esc(p.name)}</span><span class="ip">${esc(p.ip)}</span><span class="spacer"></span>${badge}</div>
+        <div class="meta">
+          <span>${esc(p.endpoint || "—")}</span>
+          <span>↓ ${bytes(p.rx)}</span><span>↑ ${bytes(p.tx)}</span>
+          <span>${ago(p.lastHandshake)}</span>
+        </div>
+        <div class="acts">${dl}</div>
+      </div>`;
+    }).join("");
+  }
+  $("#sPeers").textContent = state.peers.length;
+  const online = state.peers.filter(p => p.online).length;
+  $("#sOnline").textContent = "ออนไลน์ " + online;
+}
+
+function renderStatus() {
+  const s = state.status; if (!s) return;
+  const wg = s.services.wireguard || "down";
+  const wgUp = wg.startsWith("up:");
+  $("#sWg").textContent = wgUp ? "ON" : "OFF";
+  $("#sWg").style.color = wgUp ? "var(--lime)" : "var(--red)";
+  $("#sWgPort").textContent = "UDP " + s.config.wgPort + " · " + (wgUp ? wg.replace("up:", "") : "ไม่ทำงาน");
+  const ov = Number(s.services.openvpnClients || 0);
+  $("#sOv").textContent = ov + " client" + (ov === 1 ? "" : "s");
+  $("#sOvPort").textContent = "TCP " + s.config.ovpnPort + " + UDP";
+  $("#sDns").textContent = s.services.dns === "up" ? "ON" : "OFF";
+  $("#sDns").style.color = s.services.dns === "up" ? "var(--lime)" : "var(--amber)";
+  $("#sFw").textContent = "NAT " + (s.services.firewall === "up" ? "พร้อม" : "ยังไม่เปิด");
+  $("#hostPill").innerHTML = `<span class="${dotClass(wgUp)}"></span><span id="hostName">${esc(s.server.host)}</span>`;
+  $("#cHost").textContent = s.server.host;
+  $("#cWg").textContent = s.server.host + ":" + s.config.wgPort;
+  $("#cOv").textContent = s.server.host + ":" + s.config.ovpnPort;
+  $("#cPortal").textContent = ":" + s.config.portalPort;
+  $("#cSsh").textContent = s.services.ssh || "22";
+  $("#cMax").textContent = s.config.maxClients + " เครื่อง";
+  $("#ver").textContent = "v" + s.server.version;
+  $("#footVer").textContent = "Arena VPN v" + s.server.version;
+}
+
+async function renderEmergency() {
+  try {
+    const j = await api("/api/emergency");
+    const rows = [
+      ["WireGuard (เร็วสุด)", j.host + ":" + j.wgPort + " · UDP"],
+      ["OpenVPN TCP", j.host + ":" + j.ovpnPort + " · ผ่านไฟร์วอลล์เข้ม"],
+      ["OpenVPN UDP", j.host + ":" + j.ovpnPort + " · สำรอง"],
+      ["SSH ฉุกเฉิน", "พอร์ต " + j.sshPorts],
+    ];
+    $("#emergency").innerHTML =
+      rows.map((r, i) => `<div class="step"><div class="n">${i + 1}</div><div class="t">${esc(r[0])}<small>${esc(r[1])}</small></div></div>`).join("") +
+      `<div class="step" style="border-top:1px solid var(--line);padding-top:14px"><div class="n">⚡</div><div class="t">เข้าเครื่องไม่ได้เลย?<small>Open Console ในหน้าเว็บของคลาวด์ แล้วสั่ง: sudo arena-vpn doctor --fix</small></div></div>`;
+  } catch (e) { $("#emergency").innerHTML = '<div class="empty">โหลดไม่ได้: ' + esc(e.message) + "</div>"; }
+}
+
+async function refresh(all) {
+  try {
+    if (all) { state.status = await api("/api/status"); state.config = await api("/api/config"); }
+    const j = await api("/api/peers");
+    state.peers = j.peers || [];
+    renderPeers(); renderStatus();
+  } catch (e) { if (e.message !== "unauthorized") toast(e.message, true); }
+}
+
+// ---- actions ----
+$("#addForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = $("#addBtn"); const name = $("#nameInput").value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name)) return toast("ชื่อใช้ a-z 0-9 _ - เท่านั้น", true);
+  btn.disabled = true; btn.textContent = "กำลังสร้าง…";
+  try {
+    await api("/api/peers", { method: "POST", body: JSON.stringify({ name }) });
+    $("#nameInput").value = "";
+    toast("สร้างอุปกรณ์ " + name + " แล้ว — ดาวน์โหลดไฟล์ได้เลย");
+    await refresh(false);
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = "+ เพิ่มอุปกรณ์";
+});
+
+$("#peerList").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (btn) {
+    const name = btn.dataset.name, act = btn.dataset.act;
+    const msg = act === "revoke"
+      ? `เพิกถอน “${name}”? เครื่องนี้จะต่อ VPN ไม่ได้ทันที (สร้างคีย์ใหม่ภายหลังได้)`
+      : act === "delete"
+        ? `ลบ “${name}” ถาวร? ไฟล์ที่ดาวน์โหลดไปจะใช้ไม่ได้อีก`
+        : `สร้างคีย์ใหม่ให้ “${name}”? ไฟล์เดิมจะใช้ไม่ได้ ต้องดาวน์โหลดใหม่`;
+    if (!(await confirmDlg(act === "refresh" ? "สร้างคีย์ใหม่" : (act === "revoke" ? "เพิกถอนอุปกรณ์" : "ลบอุปกรณ์"), msg))) return;
+    btn.disabled = true;
+    try {
+      await api("/api/peer/" + encodeURIComponent(name) + "/" + act, { method: "POST" });
+      toast("เรียบร้อย");
+      await refresh(false);
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+    return;
+  }
+  const qr = ev.target.closest("button[data-qr]");
+  if (qr) showQR(qr.dataset.qr);
+});
+
+async function confirmDlg(title, body) {
+  $("#dlgH").textContent = title; $("#dlgB").textContent = body;
+  const dlg = $("#dlg");
+  return new Promise(res => {
+    const done = (v) => { dlg.close(); res(v); };
+    $("#dlgYes").onclick = () => done(true);
+    $("#dlgNo").onclick = () => done(false);
+    dlg.onclose = () => res(false);
+    dlg.showModal();
+  });
+}
+
+// แสดง QR + config สำหรับนำเข้า — ไม่ส่งคีย์ออกนอกเครื่อง
+function showQR(name) {
+  const p = state.peers.find(x => x.name === name); if (!p) return;
+  Promise.all([
+    fetch("/api/qr?id=" + encodeURIComponent(name)),
+    fetch("/api/download?id=" + encodeURIComponent(name) + "&type=wg"),
+  ]).then(([qrRes, cfgRes]) => Promise.all([qrRes.json(), cfgRes.text()]))
+    .then(([qr, cfg]) => {
+      const ta = document.createElement("textarea");
+      ta.value = cfg; ta.style.width = "100%"; ta.style.height = "120px"; ta.style.background = "#0a0e12";
+      ta.style.color = "#cfe3ff"; ta.style.border = "1px solid var(--line2)"; ta.style.borderRadius = "9px";
+      ta.style.fontFamily = "var(--mono)"; ta.style.fontSize = "11px"; ta.style.padding = "10px";
+      $("#dlgH").textContent = "อุปกรณ์ " + name;
+      const holder = document.createElement("div");
+      holder.innerHTML = '<div class="muted" style="margin-bottom:8px">สแกนด้วยแอป WireGuard (มือถือ) หรือดาวน์โหลดไฟล์จากปุ่มในรายการ</div>';
+      if (qr.ok && qr.svg) {
+        const box = document.createElement("div");
+        box.className = "qrbox";
+        box.innerHTML = qr.svg;          // SVG ที่สร้างฝั่งเซิร์ฟเวอร์ (คีย์อยู่ในเครื่องคุณ)
+        holder.appendChild(box);
+      } else {
+        const note = document.createElement("div");
+        note.className = "muted";
+        note.textContent = "QR ใช้ได้เมื่อติดตั้ง qrencode บนเซิร์ฟเวอร์ — ตอนนี้คัดลอก config แทนได้";
+        holder.appendChild(note);
+      }
+      const lbl = document.createElement("div");
+      lbl.className = "muted";
+      lbl.style.margin = "12px 0 4px";
+      lbl.textContent = "หรือคัดลอกไฟล์ .conf:";
+      holder.appendChild(lbl);
+      holder.appendChild(ta);
+      $("#dlgB").innerHTML = "";
+      $("#dlgB").appendChild(holder);
+      $("#dlgYes").textContent = "คัดลอก .conf";
+      $("#dlgYes").onclick = () => { ta.select(); navigator.clipboard?.writeText(cfg); $("#dlgYes").textContent = "คัดลอกแล้ว"; };
+      $("#dlgNo").textContent = "ปิด";
+      $("#dlg").showModal();
+    }).catch(e => toast(e.message, true));
+}
+
+// boot
+(async () => {
+  await refresh(true);
+  renderEmergency();
+  setInterval(() => refresh(false), 8000);
+  setInterval(() => renderEmergency(), 60000);
+})();
+</script>
+</body>
+</html>

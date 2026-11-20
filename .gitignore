@@ -1,7 +1,23 @@
+# ---- ความลับ: ห้าม commit เด็ดขาด ----
 keys/
 *.key
 *.ovpn
+*.conf
 *.crt
 *.csr
 *.srl
 *.pem
+*.enc
+peers.tsv
+arena-vpn.env
+!config/arena-vpn.env.example
+
+# ---- ไฟล์ชั่วคราว/ผลลัพธ์ ----
+*.tmp
+*.bak
+*.log
+*.zip
+build/
+dist/
+tmp/
+tests/.work/
