@@ -1,0 +1,7 @@
+keys/
+*.key
+*.ovpn
+*.crt
+*.csr
+*.srl
+*.pem
