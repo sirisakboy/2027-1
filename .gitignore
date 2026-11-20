@@ -21,3 +21,7 @@ build/
 dist/
 tmp/
 tests/.work/
+
+# ---- Python ----
+__pycache__/
+*.pyc
