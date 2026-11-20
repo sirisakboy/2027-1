@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    name: Shell check + smoke tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ติดตั้งเครื่องมือ
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck qrencode zip openssl wireguard-tools python3
+          python3 -m pip install --quiet --break-system-packages cryptography
+
+      - name: ตรวจ syntax
+        run: |
+          bash -n arena-vpn
+          for f in lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh; do bash -n "$f"; done
+
+      - name: ShellCheck (ระดับ error ต้องผ่าน)
+        run: shellcheck -x -S error arena-vpn lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh
+
+      - name: Smoke tests
+        run: bash tests/run.sh
+
+      - name: ตรวจว่าไม่มีไฟล์ลับหลุดเข้า repo
+        run: |
+          if git ls-files | grep -E '\.(key|pem|crt|ovpn|enc)$|peers\.tsv|arena-vpn\.env$'; then
+            echo "::error::พบไฟล์ที่อาจเป็นความลับถูก commit"
+            exit 1
+          fi
+          echo "ไม่พบไฟล์ลับ ✅"
+
+      - name: ตรวจเอกสาร
+        run: |
+          test -f README.md
+          test "$(ls docs/*.md | wc -l)" -ge 8
+          echo "เอกสารครบ ✅"
