@@ -22,6 +22,8 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/firewall.sh"
 source "$(dirname -- "${BASH_SOURCE[0]}")/dns.sh"
 # shellcheck source=/dev/null
 source "$(dirname -- "${BASH_SOURCE[0]}")/failover.sh"
+# shellcheck source=/dev/null
+source "$(dirname -- "${BASH_SOURCE[0]}")/platform.sh"
 
 DOC_RESULTS=()
 DOC_FAILS=0
@@ -165,6 +167,18 @@ doctor_check_ssh() {
   fi
 }
 
+doctor_check_platform() {
+  local p
+  p="$(detect_platform)"
+  platform_apply_caps "$p"
+  rec ok "platform" "ตรวจพบแพลตฟอร์ม: $p"
+  local line lvl msg
+  while IFS=$'\t' read -r lvl msg; do
+    [[ -z $lvl ]] && continue
+    rec "$lvl" "platform-$lvl" "$msg"
+  done < <(platform_findings "$p")
+}
+
 doctor_check_security() {
   if have ufw && ufw status 2>/dev/null | grep -q "Status: active"; then
     rec warn ufw "ufw ทำงานอยู่ — อาจทับกฎ iptables ของ Arena VPN (ปิด ufw หรือย้ายกฎ)"
@@ -181,6 +195,7 @@ doctor_check_security() {
 doctor_checks() {
   DOC_RESULTS=(); DOC_FAILS=0; DOC_ACTION=0
   doctor_check_env
+  doctor_check_platform
   doctor_check_public_ip
   doctor_check_services
   doctor_check_ports
