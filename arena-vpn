@@ -22,6 +22,10 @@ LIBDIR="$AVPN_HOME/lib"
 # shellcheck source=/dev/null
 source "$LIBDIR/common.sh"
 # shellcheck source=/dev/null
+source "$LIBDIR/platform.sh"
+# shellcheck source=/dev/null
+source "$LIBDIR/remote.sh"
+# shellcheck source=/dev/null
 source "$LIBDIR/peers.sh"
 # shellcheck source=/dev/null
 source "$LIBDIR/wg.sh"
@@ -64,8 +68,8 @@ usage() {
 ${C_BOLD}Arena VPN${C_RESET} — อุโมงค์ส่วนตัวบนคลาวด์ฟรี  v$AVPN_VERSION
 
 ${C_BOLD}ติดตั้งครั้งแรก${C_RESET}
-  arena-vpn init [--preset gcp|oracle|aws|generic] [--portal] [--yes]
-      --preset   ปรับ MTU/พอร์ตให้เหมาะกับเจ้านั้น ๆ (gcp = MTU 1360)
+  arena-vpn init [--preset <แพลตฟอร์ม>] [--portal] [--yes]
+      ไม่ต้องระบุ preset ก็ได้ — ตรวจอัตโนมัติ (gcp/aws/oracle/azure/cloudshell/selfhosted)
       --portal   เปิดพอร์ทัลเว็บจัดการอุปกรณ์ด้วย
       --host X   ตั้งโดเมน หรือ IP ที่จะใช้ในไฟล์ client
 
@@ -78,6 +82,18 @@ ${C_BOLD}อุปกรณ์ (peers)${C_RESET}
   arena-vpn peer revoke <ชื่อ>               เพิกถอนทันที (ยังกู้คืนได้)
   arena-vpn peer delete <ชื่อ> --yes         ลบทิ้งถาวร
   arena-vpn peer export <ชื่อ> <ไฟล์.zip>    รวมทุกไฟล์เป็น zip (ส่งให้คนอื่น)
+
+${C_BOLD}แพลตฟอร์ม (Cloud Shell / AWS / Oracle / เซิร์ฟเวอร์ส่วนตัว)${C_RESET}
+  arena-vpn platform show                   ตรวจว่าเป็นอะไร + ทำอะไรได้ + คำสั่ง firewall ที่ต้องรัน
+  arena-vpn platform check                  ตรวจปัญหาที่เฉพาะกับแพลตฟอร์มนั้น
+  arena-vpn platform guide                  คำสั่ง firewall/port-forward ที่ต้องไปทำนอกเครื่อง
+  arena-vpn platform cloudshell             คู่มือใช้ Cloud Shell เป็นเครื่องควบคุม
+
+${C_BOLD}ควบคุม VM จากระยะไกล (ใช้ได้จาก Cloud Shell)${C_RESET}
+  arena-vpn bootstrap <user@vm>             ติดตั้ง Arena VPN บน VM ใหม่ ในคำสั่งเดียว
+  arena-vpn remote <user@vm> <คำสั่ง>        สั่ง arena-vpn บน VM ผ่าน SSH
+  arena-vpn proxy start <user@vm>           เปิด SOCKS5 ผ่าน SSH (ใช้ VPN โดยไม่ต้องมี TUN)
+  arena-vpn proxy stop | status | test
 
 ${C_BOLD}สถานะ / ซ่อม${C_RESET}
   arena-vpn status                           สรุปสถานะทั้งหมด
@@ -144,54 +160,65 @@ cmd_init() {
   . /etc/os-release
   case "${ID:-}" in
     debian | ubuntu | raspbian) ok "OS: ${PRETTY_NAME:-$ID}" ;;
+    rocky | almalinux | centos | fedora | rhel)
+      die "พบ ${PRETTY_NAME:-$ID} — โปรเจกต์นี้ใช้ apt (Debian/Ubuntu)\n    ทางเลือก: reinstall เป็น Debian 12/Ubuntu 24.04 หรือรอการรองรับ dnf (ดู docs/09 §Roadmap)" ;;
     *) warn "ทดสอบกับ Debian/Ubuntu เท่านั้น (พบ ${PRETTY_NAME:-$ID}) — จะลองต่อ" ;;
   esac
 
-  # แพ็กเกจพื้นฐาน
+  # ---------- ตรวจจับแพลตฟอร์มก่อนตัดสินใจอะไร ----------
+  if [[ -z $preset ]]; then
+    preset="$(detect_platform)"
+  fi
+  platform_apply_caps "$preset"
+  step "แพลตฟอร์ม: ${C_BOLD}$preset${C_RESET}"
+  _cap() { [[ $1 == 1 ]] && printf '%sใช่%s' "$C_GREEN" "$C_RESET" || printf '%sไม่%s' "$C_RED" "$C_RESET"; }
+  printf '  TUN: %s · systemd: %s · public IP: %s · ข้อมูลคงทน: %s\n' \
+    "$(_cap "$AVPN_HAS_TUN")" "$(_cap "$AVPN_HAS_SYSTEMD")" \
+    "$(_cap "$AVPN_HAS_PUBLIC_IP")" "$(_cap "$([[ $AVPN_IS_EPHEMERAL == 1 ]] && echo 0 || echo 1)")" >&2
+
+  # ---------- Cloud Shell / ไม่มี TUN: ไม่ใช่เครื่องแม่ ----------
+  if [[ $AVPN_HAS_TUN == 0 ]]; then
+    warn "เครื่องนี้ไม่มี /dev/net/tun → รัน VPN server ไม่ได้ (ข้อจำกัดของแพลตฟอร์ม ไม่ใช่การตั้งค่า)"
+    if [[ $preset == cloudshell ]]; then
+      cloudshell_guide
+    else
+      platform_firewall_guide "$preset"
+      printf '\n  ${C_BOLD}ทางออก${C_RESET}\n'
+      printf '    • ใช้เครื่องควบคุม: arena-vpn remote <user@vm> init --yes\n'
+      printf '    • หรือ proxy ผ่าน SSH: arena-vpn proxy start <user@vm>\n\n'
+    fi
+    die "ยกเลิกการติดตั้งบนเครื่องนี้"
+  fi
+
+  # ---------- แพ็กเกจพื้นฐาน ----------
+  if ! have apt-get; then
+    die "ไม่พบ apt-get — ต้องเป็น Debian/Ubuntu (ดู OS ด้านบน)"
+  fi
   apt_update || die "apt update ไม่สำเร็จ"
   apt_install ca-certificates curl iptables iproute2 openssl qrencode zip openssh-server unzip || true
   apt_install wireguard-tools || die "ติดตั้ง wireguard-tools ไม่สำเร็จ"
   apt_install openvpn || die "ติดตั้ง openvpn ไม่สำเร็จ"
 
-  # โหลดโมดูลที่ต้องใช้
-  modprobe tun 2>/dev/null || true
-  [[ -e /dev/net/tun ]] || die "ไม่พบ /dev/net/tun — คลาวด์ของท่านปิด TUN (OpenVPN ใช้ไม่ได้)"
-
   mkdir -p "$AVPN_ETC" "$AVPN_PEERS_DIR" "$AVPN_STATE" "$AVPN_BACKUP_DIR"
   chmod 700 "$AVPN_ETC" "$AVPN_PEERS_DIR"
 
-  # ตรวจจับคลาวด์ → ปรับค่าอัตโนมัติ
-  if [[ -z $preset ]]; then
-    preset="$(detect_cloud)"
-    [[ $preset == unknown ]] && preset="generic"
-  fi
-  step "ตั้งค่าเริ่มต้น (preset: $preset)"
+  step "ตั้งค่าเริ่มต้น (platform: $preset)"
 
   local pub_ip
   pub_ip="$(refresh_public_ip || true)"
   [[ -n $pub_ip ]] && ok "Public IP: $pub_ip"
 
   load_env
-  local mtu=$AVPN_MTU
-  local ov_port=$AVPN_OVPN_PORT
-  local wg_port=$AVPN_WG_PORT
+  local mtu ov_port wg_port tun_name
+  mtu="$(platform_mtu "$preset")"
+  tun_name="$(platform_tun_name "$preset")"
+  ov_port=$AVPN_OVPN_PORT
+  wg_port=$AVPN_WG_PORT
+  # เซิร์ฟเวอร์ส่วนตัวมักถูกบล็อก 443 น้อยกว่าคลาวด์? ไม่จริง — ใช้ 443 เสมอเพื่อผ่านไฟร์วอลล์เข้ม
   case "$preset" in
-    gcp)
-      # GCP: cloud firewall เป็น "ingress rules" แยก, MTU ของ VM = 1460
-      mtu=1360
-      ov_port=443
-      pub_ip="${pub_ip:-}"
-      ;;
-    oracle)
-      mtu=1420
-      ;;
-    aws)
-      mtu=1420
-      ;;
-    generic)
-      mtu=1420
-      ;;
+    gcp | cloudshell) ov_port=443 ;;
   esac
+  info "MTU ที่เลือก: $mtu (จากการ์ด $(egress_mtu 2>/dev/null || echo '?')) · tunnel: $tun_name"
 
   # เขียน env (ไม่ทับค่าที่ผู้ใช้ตั้งไว้แล้ว)
   [[ -f $AVPN_ENV_FILE ]] || : >"$AVPN_ENV_FILE"
@@ -204,6 +231,18 @@ cmd_init() {
   _set_default AVPN_DNS_ENABLED "1"
   _set_default AVPN_FALLBACK_ENABLED "1"
   _set_default AVPN_BLOCK_IPV6 "1"
+  # จำผลการตรวจจับไว้ เพื่อให้คำสั่งอื่น (doctor/status/portal) ให้คำแนะนำตรงแพลตฟอร์ม
+  env_set AVPN_PLATFORM "$preset"
+  mkdir -p "$AVPN_STATE"
+  printf '%s\n' "$preset" >"$AVPN_STATE/platform" 2>/dev/null || true
+  env_set AVPN_HAS_TUN "$AVPN_HAS_TUN"
+  env_set AVPN_HAS_SYSTEMD "$AVPN_HAS_SYSTEMD"
+  env_set AVPN_HAS_PUBLIC_IP "$AVPN_HAS_PUBLIC_IP"
+  _set_default AVPN_WG_IF "$tun_name"
+  if [[ $preset == selfhosted-nat ]]; then
+    _set_default AVPN_PUBLIC_HOST ""
+    warn "เครื่องอยู่หลัง NAT — ต้องตั้ง AVPN_PUBLIC_HOST เป็นโดเมน DDNS หรือ IP สาธารณะของเราเตอร์"
+  fi
   [[ -n $host ]] && env_set AVPN_PUBLIC_HOST "$host"
   [[ -z $host && -n $pub_ip ]] && _set_default AVPN_PUBLIC_HOST ""
 
@@ -285,8 +324,10 @@ summarize() {
   printf '   1) sudo arena-vpn peer list            → ดูอุปกรณ์\n'
   printf '   2) sudo arena-vpn peer qr <ชื่อ>       → สแกนจากมือถือ\n'
   printf '   3) sudo arena-vpn status               → ตรวจสถานะ\n'
-  printf '\n  %sสำคัญ:%s เปิดพอร์ตบนไฟร์วอลล์ของคลาวด์ด้วย (UDP %s, TCP %s)\n' "$C_YELLOW" "$C_RESET" "$AVPN_WG_PORT" "$AVPN_OVPN_PORT"
-  printf '  รายละเอียดตามผู้ให้บริการ: docs/03-platforms.md\n\n'
+  printf '\n  %sขั้นสำคัญ — เปิดพอร์ตที่ "นอกเครื่อง" ด้วย%s\n' "$C_YELLOW" "$C_RESET"
+  platform_firewall_guide "$(cat "$AVPN_STATE/platform" 2>/dev/null || echo "${AVPN_PLATFORM:-unknown}")" \
+    "$host" "$AVPN_WG_PORT" "$AVPN_OVPN_PORT" "$AVPN_PORTAL_PORT"
+  printf '\n  ตรวจจากเครื่องอื่น: bash tools/port-check.sh %s\n\n' "$host"
 }
 
 # ---------------- peers ----------------
@@ -467,6 +508,65 @@ cmd_peer() {
       ;;
     *)
       die "ไม่รู้จัก: peer $sub (add|list|qr|show|refresh|revoke|delete|export)"
+      ;;
+  esac
+}
+
+# ---------------- platform ----------------
+cmd_platform() {
+  local sub=${1:-show}; shift || true
+  load_env
+  local p="${AVPN_PLATFORM:-}"
+  if [[ -z $p || $p == unknown ]]; then
+    p="$(detect_platform)"
+  fi
+  case "$sub" in
+    show | "")
+      printf '\n%sแพลตฟอร์มที่ตรวจพบ:%s %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_LIME" "$p" "$C_RESET"
+      printf '%s\n' "─────────────────────────────────────────────"
+      _cap() { [[ $1 == 1 ]] && printf '%sใช่%s' "$C_GREEN" "$C_RESET" || printf '%sไม่%s' "$C_RED" "$C_RESET"; }
+      printf '  %-24s %s\n' "TUN (/dev/net/tun)" "$(_cap "$AVPN_HAS_TUN")"
+      printf '  %-24s %s\n' "systemd" "$(_cap "$AVPN_HAS_SYSTEMD")"
+      printf '  %-24s %s\n' "Public IP (inbound)" "$(_cap "$AVPN_HAS_PUBLIC_IP")"
+      printf '  %-24s %s\n' "ข้อมูลคงทน" "$(_cap "$([[ $AVPN_IS_EPHEMERAL == 1 ]] && echo 0 || echo 1)")"
+      local eif eip emtu
+      eif="$(fw_egress_if 2>/dev/null)"
+      eip="$(egress_local_ip 2>/dev/null || echo '?')"
+      emtu="$(egress_mtu 2>/dev/null || echo '?')"
+      printf '  %-24s %s\n' "การ์ดขาออก" "${eif:-?} (${eip}, MTU ${emtu})"
+      printf '  %-24s %s\n' "MTU ที่แนะนำ" "$(platform_mtu "$p")"
+      printf '  %-24s %s\n' "Tunnel ที่แนะนำ" "$(platform_tun_name "$p")"
+      printf '\n'
+      platform_firewall_guide "$p" "$(public_host 2>/dev/null || echo '<IP>')" \
+        "${AVPN_WG_PORT:-51820}" "${AVPN_OVPN_PORT:-443}" "${AVPN_PORTAL_PORT:-8443}"
+      ;;
+    check)
+      local out n=0
+      out="$(platform_findings "$p")"
+      if [[ -z $out ]]; then
+        ok "ไม่พบปัญหาที่เฉพาะกับแพลตฟอร์ม $p"
+      else
+        while IFS=$'\t' read -r lvl msg; do
+          [[ -z $lvl ]] && continue
+          n=$((n + 1))
+          case "$lvl" in
+            ok) printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$msg" ;;
+            warn) printf '  %s!%s %s\n' "$C_YELLOW" "$C_RESET" "$msg" ;;
+            fail) printf '  %s✖%s %s\n' "$C_RED" "$C_RESET" "$msg" ;;
+          esac
+        done <<<"$out"
+        [[ $n -gt 0 ]] || ok "ปกติ"
+      fi
+      ;;
+    guide)
+      platform_firewall_guide "$p" "$(public_host 2>/dev/null || echo '<IP>')" \
+        "${AVPN_WG_PORT:-51820}" "${AVPN_OVPN_PORT:-443}" "${AVPN_PORTAL_PORT:-8443}"
+      ;;
+    cloudshell | shell)
+      cloudshell_guide
+      ;;
+    *)
+      die "platform: show | check | guide | cloudshell"
       ;;
   esac
 }
@@ -717,6 +817,13 @@ main() {
       fi
       ;;
     apply) cmd_apply ;;
+    platform)
+      local sub2=${1:-show}; shift || true
+      cmd_platform "$sub2" "$@"
+      ;;
+    remote) cmd_remote "$@" ;;
+    proxy) cmd_proxy "$@" ;;
+    bootstrap) cmd_bootstrap "$@" ;;
     internal) cmd_internal "$@" ;;
     config) cmd_config "$@" ;;
     portal) cmd_portal "$@" ;;

@@ -18,16 +18,36 @@ fw_egress_if() {
   fi
 }
 
-fw_rule() { # fw_rule <chain> <rule...> — เพิ่มเฉพาะเมื่อยังไม่มี
+# เพิ่มกฎแบบ idempotent
+#   fw_rule <chain> <rule...>          → ใช้ -A (ต่อท้าย)
+#   fw_rule_i <chain> <rule...>        → ใช้ -I (แทรกบนสุด)  ← จำเป็นบน Oracle/อิมเมจที่ปิดท้ายด้วย REJECT
+fw_rule() {
+  fw_rule_at A "$@"
+}
+
+fw_rule_i() {
+  fw_rule_at I "$@"
+}
+
+fw_rule_at() {
   [[ ${EUID:-$(id -u)} -ne 0 ]] && ! is_true "${AVPN_ALLOW_NONROOT:-0}" && return 0
-  local chain=$1
-  shift
-  iptables -C "$chain" "$@" 2>/dev/null || iptables -A "$chain" "$@" || true
+  local op=$1 chain=$2
+  shift 2
+  if iptables -C "$chain" "$@" 2>/dev/null; then
+    return 0
+  fi
+  if [[ $op == I ]]; then
+    # แทรกที่ตำแหน่ง 1 เสมอ เพื่อให้อยู่เหนือ REJECT/DROP ของอิมเมจคลาวด์
+    iptables -I "$chain" 1 "$@" 2>/dev/null || true
+  else
+    iptables -A "$chain" "$@" 2>/dev/null || true
+  fi
 }
 
 fw_open_port() { # fw_open_port <tcp|udp> <port>
   local proto=$1 port=$2
-  fw_rule INPUT -p "$proto" --dport "$port" -j ACCEPT
+  # ต้องแทรกบนสุด: อิมเมจ Oracle/Ubuntu ใส่ "-A INPUT -j REJECT" ไว้ท้ายเชน
+  fw_rule_i INPUT -p "$proto" --dport "$port" -j ACCEPT
 }
 
 # พอร์ต SSH ปัจจุบันจาก sshd ที่กำลังฟัง (fallback: 22)
@@ -63,9 +83,9 @@ fw_apply() {
   iptables -P OUTPUT ACCEPT 2>/dev/null || true
 
   # ---------- INPUT: อนุญาตที่จำเป็น ----------
-  fw_rule INPUT -i lo -j ACCEPT
-  fw_rule INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  fw_rule INPUT -p icmp --icmp-type echo-request -j ACCEPT
+  fw_rule_i INPUT -i lo -j ACCEPT
+  fw_rule_i INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  fw_rule_i INPUT -p icmp --icmp-type echo-request -j ACCEPT
 
   local p
   for p in $(fw_current_ssh_ports) ${AVPN_SSH_FALLBACK_PORTS:-}; do
@@ -87,19 +107,19 @@ fw_apply() {
     iptables -P INPUT ACCEPT 2>/dev/null || true
   else
     # รับ traffic ที่ initiator มาจาก tunnel ด้วย (เช่น SSH เข้า 10.8.0.1)
-    fw_rule INPUT -i "$AVPN_WG_IF" -j ACCEPT
-    fw_rule INPUT -i "tun+" -j ACCEPT
+    fw_rule_i INPUT -i "$AVPN_WG_IF" -j ACCEPT
+    fw_rule_i INPUT -i "tun+" -j ACCEPT
   fi
 
   # ---------- FORWARD: ระหว่าง tunnel กับอินเทอร์เน็ต ----------
-  fw_rule FORWARD -i "$AVPN_WG_IF" -o "$egress" -j ACCEPT
-  fw_rule FORWARD -i "tun+" -o "$egress" -j ACCEPT
-  fw_rule FORWARD -i "$egress" -o "$AVPN_WG_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  fw_rule FORWARD -i "$egress" -o "tun+" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  fw_rule_i FORWARD -i "$AVPN_WG_IF" -o "$egress" -j ACCEPT
+  fw_rule_i FORWARD -i "tun+" -o "$egress" -j ACCEPT
+  fw_rule_i FORWARD -i "$egress" -o "$AVPN_WG_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  fw_rule_i FORWARD -i "$egress" -o "tun+" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   # ให้ client VPN คุยกันเอง (ใช้เครื่องในทีมเป็น jump host ได้)
-  fw_rule FORWARD -i "$AVPN_WG_IF" -o "$AVPN_WG_IF" -j ACCEPT
-  fw_rule FORWARD -i "tun+" -o "$AVPN_WG_IF" -j ACCEPT
-  fw_rule FORWARD -i "$AVPN_WG_IF" -o "tun+" -j ACCEPT
+  fw_rule_i FORWARD -i "$AVPN_WG_IF" -o "$AVPN_WG_IF" -j ACCEPT
+  fw_rule_i FORWARD -i "tun+" -o "$AVPN_WG_IF" -j ACCEPT
+  fw_rule_i FORWARD -i "$AVPN_WG_IF" -o "tun+" -j ACCEPT
 
   # ---------- NAT ----------
   fw_rule POSTROUTING -t nat -s "$AVPN_WG_NET" -o "$egress" -j MASQUERADE
@@ -107,7 +127,7 @@ fw_apply() {
   fw_rule POSTROUTING -t nat -s "$AVPN_OVPN_NET2" -o "$egress" -j MASQUERADE
 
   # สร้าง subnet อุโมงค์รับขาเข้า (กรณี service สตาร์ทก่อน wg)
-  fw_rule INPUT -i "tun+" -p "$AVPN_OVPN_PROTO" --dport "$AVPN_OVPN_PORT" -j ACCEPT
+  fw_rule_i INPUT -i "tun+" -p "$AVPN_OVPN_PROTO" --dport "$AVPN_OVPN_PORT" -j ACCEPT
 
   ok "ไฟร์วอลล์ + NAT พร้อมใช้งาน"
 }

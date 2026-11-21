@@ -282,6 +282,169 @@ while read -r link; do
 done < <(grep -oE '^\| \[[^]]+\]\(([^)]+\.md)\)' "$ROOT/README.md" | sed -E 's/.*\(([^)]+)\)/\1/' | sort -u)
 [[ $LINKFAIL == 0 ]] && pass "ลิงก์ในตารางเอกสารของ README ถูกต้อง"
 
+
+# ==============================================================================
+group "16. แพลตฟอร์ม (Cloud Shell / GCP / AWS / Oracle / self-hosted)"
+
+PLAT_SHIM="$WORK/bin"
+# mock curl ที่เคารพ -o /dev/null — เลียนแบบ metadata endpoint ของแต่ละคลาวด์
+cat >"$PLAT_SHIM/curl" <<'SH'
+#!/usr/bin/env bash
+# mock curl: PLATFORM_SIM=aws|oracle|gcp|azure|<empty>
+sim="${PLATFORM_SIM:-}"; args="$*"; out=""; prev=""
+for a in "$@"; do [[ $prev == "-o" ]] && out=$a; prev=$a; done
+emit() {
+  if [[ -n $out ]]; then
+    [[ $out == /dev/null ]] && exit 0
+    printf '%s\n' "$*" >"$out"; exit 0
+  fi
+  printf '%s\n' "$*"; exit 0
+}
+case "$sim" in
+  aws)
+    [[ $args == *"/latest/api/token"* ]] && emit "MOCK_TOKEN"
+    [[ $args == *"instance-id"* && $args == *"MOCK_TOKEN"* ]] && emit "i-0123456789abcdef0"
+    exit 22 ;;
+  oracle) [[ $args == *"opc/v2/instance"* ]] && [[ $args == *"Bearer Oracle"* ]] && emit '{"id":"ocid1.instance"}'; exit 22 ;;
+  gcp)    [[ $args == *"computeMetadata"* ]] && [[ $args == *"Metadata-Flavor: Google"* ]] && emit "777888999"; exit 22 ;;
+  azure)  [[ $args == *"metadata/instance"* ]] && emit '{"vmId":"azure-1"}'; exit 22 ;;
+  *) exit 22 ;;
+esac
+SH
+chmod +x "$PLAT_SHIM/curl"
+
+# เรียก detect_platform ภายใต้ env ที่กำหนด
+plat_detect() {
+  env -u CLOUD_SHELL -u AWS_REGION -u OCI_REGION \
+    PATH="$PLAT_SHIM:$PATH" PLATFORM_SIM="${1:-}" AVPN_ALLOW_NONROOT=1 \
+    bash -c "cd '$ROOT' && source lib/common.sh && source lib/platform.sh && detect_platform" 2>/dev/null
+}
+
+[[ "$(plat_detect aws)" == aws ]] && pass "ตรวจพบ AWS (ผ่าน IMDSv2 + token)" || fail "ตรวจ AWS ไม่ได้" "$(plat_detect aws)"
+[[ "$(plat_detect oracle)" == oracle ]] && pass "ตรวจพบ Oracle (ต้องมี header Bearer)" || fail "ตรวจ Oracle ไม่ได้"
+[[ "$(plat_detect gcp)" == gcp ]] && pass "ตรวจพบ GCP (ต้องมี Metadata-Flavor)" || fail "ตรวจ GCP ไม่ได้"
+[[ "$(plat_detect azure)" == azure ]] && pass "ตรวจพบ Azure" || fail "ตรวจ Azure ไม่ได้"
+[[ "$(plat_detect '')" == selfhosted || "$(plat_detect '')" == selfhosted-nat ]] && pass "ไม่มี metadata → self-hosted" || fail "ตรวจ self-hosted ไม่ได้"
+
+# Cloud Shell: CLOUD_SHELL=true ต้องชนะทุกอย่าง
+[[ "$(CLOUD_SHELL=true PATH="$PLAT_SHIM:$PATH" bash -c "cd '$ROOT' && source lib/common.sh && source lib/platform.sh && detect_platform" 2>/dev/null)" == cloudshell ]] \
+  && pass "ตรวจพบ Google Cloud Shell (CLOUD_SHELL=true)" || fail "ตรวจ Cloud Shell ไม่ได้"
+
+# Cloud Shell ต้องไม่มี TUN/public IP/ไม่คงทน
+eval "$(CLOUD_SHELL=true PATH="$PLAT_SHIM:$PATH" bash -c "
+  cd '$ROOT' && source lib/common.sh && source lib/platform.sh
+  p=cloudshell; platform_apply_caps \$p
+  echo \"CS_TUN=\$AVPN_HAS_TUN CS_SYS=\$AVPN_HAS_SYSTEMD CS_PUB=\$AVPN_HAS_PUBLIC_IP CS_EPH=\$AVPN_IS_EPHEMERAL\"" 2>/dev/null)"
+[[ ${CS_TUN:-} == 0 ]] && pass "Cloud Shell: ไม่มี TUN (ตั้งค่าถูก)" || fail "Cloud Shell TUN ควรเป็น 0 (ได้ '${CS_TUN:-}')"
+[[ ${CS_PUB:-} == 0 ]] && pass "Cloud Shell: ไม่มี inbound port" || fail "Cloud Shell public IP ควรเป็น 0"
+[[ ${CS_EPH:-} == 1 ]] && pass "Cloud Shell: ข้อมูลไม่คงทน (ephemeral)" || fail "Cloud Shell ควรเป็น ephemeral"
+
+# MTU: ต้องไม่เกิน NIC MTU - 80 และไม่ต่ำกว่า 1280
+plat_mtu() {
+  env -u CLOUD_SHELL PATH="$PLAT_SHIM:$PATH" PLATFORM_SIM="${2:-}" bash -c "
+    cd '$ROOT' && source lib/common.sh && source lib/platform.sh && platform_mtu '$1'" 2>/dev/null
+}
+[[ "$(plat_mtu gcp)" == 1360 ]] && pass "MTU ของ GCP = 1360" || fail "MTU GCP ผิด (ได้ '$(plat_mtu gcp)')"
+for pl in aws oracle selfhosted; do
+  m="$(plat_mtu "$pl")"
+  if [[ $m =~ ^[0-9]+$ ]] && ((m >= 1280 && m <= 1420)); then
+    pass "MTU ของ $pl อยู่ในช่วงปลอดภัย ($m)"
+  else
+    fail "MTU ของ $pl ผิด: '$m'"
+  fi
+done
+
+# platform_mtu ต้องเคารพ MTU จริงของการ์ด (PPPoE 1492 → ≤1412)
+MTU_TEST=$(PATH="$PLAT_SHIM:$PATH" bash -c "
+  cd '$ROOT' && source lib/common.sh && source lib/platform.sh
+  egress_mtu() { echo 1492; }
+  platform_mtu selfhosted" 2>/dev/null)
+(( MTU_TEST <= 1412 && MTU_TEST >= 1280 )) && pass "เคารพ MTU การ์ดจริง 1492 → $MTU_TEST (PPPoE)" || fail "ไม่เคารพ MTU การ์ดจริง (ได้ $MTU_TEST)"
+
+# CGNAT / private IP
+# ฟังก์ชันเหล่านี้คืนค่าทาง exit code — ต้องเรียกตรง ๆ ไม่ใช่ $(...)
+iprc() { bash -c "cd '$ROOT' && source lib/common.sh && source lib/platform.sh && $1 $2" 2>/dev/null; }
+iprc is_cgnat_ip 100.64.1.5 && pass "จับ CGNAT 100.64/10 ได้ (ทำ VPN ไม่ได้)" || fail "ไม่จับ CGNAT 100.64.1.5"
+iprc is_cgnat_ip 100.128.5.1; (( $? != 0 )) && pass "IP 100.128 ไม่ใช่ CGNAT" || fail "เข้าใจ 100.128 ผิดว่าเป็น CGNAT"
+iprc is_cgnat_ip 8.8.8.8; (( $? != 0 )) && pass "8.8.8.8 ไม่ใช่ CGNAT" || fail "เข้าใจ 8.8.8.8 ผิด"
+IP3OK=1
+for ip in 10.1.2.3 192.168.1.1 172.16.0.1; do iprc is_private_ip "$ip" || IP3OK=0; done
+[[ $IP3OK == 1 ]] && pass "จับ private IP ครบ 3 ช่วง" || fail "จับ private IP ไม่ครบ"
+iprc is_private_ip 1.1.1.1; (( $? != 0 )) && pass "1.1.1.1 ไม่ใช่ private" || fail "เข้าใจ 1.1.1.1 ผิด"
+
+# fw_rule ต้องใช้ -I (ไม่ใช่ -A) — บั๊ก Oracle
+grep -q 'fw_rule_i()' "$ROOT/lib/firewall.sh" && pass "มี fw_rule_i (insert)" || fail "ไม่มี fw_rule_i"
+if grep -qE '^\s*fw_rule\s+"?INPUT"?' "$ROOT/lib/firewall.sh"; then
+  fail "ยังมี fw_rule (append) สำหรับ INPUT — จะถูก REJECT ของ Oracle กลืน"
+else
+  pass "ไม่มี fw_rule (append) สำหรับ INPUT แล้ว (แก้บั๊ก Oracle)"
+fi
+INS=$(grep -c 'fw_rule_i' "$ROOT/lib/firewall.sh")
+((INS >= 8)) && pass "ใช้ -I กับกฎ ACCEPT ทั้งหมด ($INS จุด)" || fail "ใช้ fw_rule_i น้อยเกิน ($INS)"
+
+# Oracle: ต้องมี -o /dev/null (กัน body หลุด) และ header บังคับ
+grep -q 'opc/v2/instance' "$ROOT/lib/platform.sh" && pass "มี metadata endpoint ของ Oracle" || fail "ขาด endpoint Oracle"
+grep -B2 'opc/v2/instance' "$ROOT/lib/platform.sh" | grep -q 'Authorization: Bearer Oracle' \
+  && pass "Oracle probe ส่ง header ที่บังคับ" || fail "Oracle probe ไม่ส่ง header"
+grep -B2 'opc/v2/instance' "$ROOT/lib/platform.sh" | grep -q -- '-o /dev/null' \
+  && pass "Oracle probe ใช้ -o /dev/null (ไม่ให้ body หลุด)" || fail "Oracle probe ไม่มี -o /dev/null"
+
+# AWS: ต้องลอง IMDSv2 ก่อน (token)
+grep -q 'latest/api/token' "$ROOT/lib/platform.sh" && pass "AWS ใช้ IMDSv2 (ดึง token)" || fail "AWS ไม่มี IMDSv2"
+grep -q 'X-aws-ec2-metadata-token' "$ROOT/lib/platform.sh" && pass "AWS ส่ง header token กลับ" || fail "AWS ไม่ส่ง header token"
+
+# platform_findings: Cloud Shell ต้องเตือนว่าทำ server ไม่ได้
+CS_MSG=$(CLOUD_SHELL=true PATH="$PLAT_SHIM:$PATH" bash -c "
+  cd '$ROOT' && source lib/common.sh && source lib/platform.sh && platform_findings cloudshell" 2>/dev/null)
+[[ $CS_MSG == *"tun"* || $CS_MSG == *"VPN server"* ]] && pass "Cloud Shell: เตือนว่าไม่มี TUN" || fail "Cloud Shell ไม่เตือนเรื่อง TUN"
+
+# คำแนะนำ firewall ต้องมีคำสั่งจริงของแต่ละเจ้า
+for pl in gcp aws oracle; do
+  G=$(bash -c "cd '$ROOT' && source lib/common.sh && source lib/platform.sh && platform_firewall_guide '$pl' vpn.test 51820 443 8443" 2>/dev/null)
+  case "$pl" in
+    gcp)    [[ $G == *gcloud*'firewall-rules'* ]] && pass "guide GCP มีคำสั่ง gcloud" || fail "guide GCP ไม่มีคำสั่ง gcloud" ;;
+    aws)    [[ $G == *authorize-security-group-ingress* ]] && pass "guide AWS มีคำสั่ง aws ec2" || fail "guide AWS ไม่มีคำสั่ง aws" ;;
+    oracle) [[ $G == *"Security List"* || $G == *"Ingress"* ]] && pass "guide Oracle อธิบาย Security List" || fail "guide Oracle ไม่มี Security List" ;;
+  esac
+done
+G_NAT=$(bash -c "cd '$ROOT' && source lib/common.sh && source lib/platform.sh && platform_firewall_guide selfhosted-nat 1.2.3.4 51820 443 8443" 2>/dev/null)
+[[ $G_NAT == *"Port forward"* || $G_NAT == *"port forward"* ]] && pass "guide self-hosted พูดถึง port forwarding" || fail "guide self-hosted ไม่มี port forwarding"
+
+# remote: การ quote อาร์กิวเมนต์ต้องปลอดภัย (ทดสอบ logic จริง)
+cat >"$WORK/qtest.sh" <<'QT'
+set -u
+args=("ชื่อ มี ช่องว่าง" "--note" 'a'"'"'b"c' '$HOME; rm -rf /' "*glob*")
+q=""
+for a in "${args[@]}"; do q+=" $(printf '%q' "$a")"; done
+f() { printf '%d' $#; }
+eval "f${q}"
+QT
+QOUT="$(bash "$WORK/qtest.sh" 2>/dev/null)"
+[[ $QOUT == 5 ]] && pass "remote: อาร์กิวเมนต์พิเศษไม่แตก (argc ถูกต้อง)" || fail "remote quote ผิด (ได้ '$QOUT')"
+grep -q 'printf .%q.' "$ROOT/lib/remote.sh" && pass "remote ใช้ %q quote ก่อนส่ง ssh" || fail "remote ไม่ได้ quote"
+
+# remote: ต้องเก็บ rc ของ ssh ทันที (บั๊ก local rc=$?)
+if grep -A1 '"sudo arena-vpn' "$ROOT/lib/remote.sh" | grep -q 'out="\$(ssh'; then
+  pass "remote เรียก ssh ใน subshell (rc ไม่ถูก local กลบ)"
+else
+  fail "remote อาจเก็บ rc ผิด (local rc=\$?)"
+fi
+grep -q 'rc=\$?' "$ROOT/lib/remote.sh" && pass "remote เก็บ exit code" || fail "remote ไม่เก็บ exit code"
+
+# remote/proxy/bootstrap ต้องมีในคำสั่ง
+for c in remote proxy bootstrap platform; do
+  grep -qE "^\s*$c\)" "$ROOT/arena-vpn" && pass "มีคำสั่ง '$c' ในตัว dispatcher" || fail "ขาดคำสั่ง '$c'"
+done
+grep -q 'proxy.pid' "$ROOT/lib/remote.sh" && pass "proxy มี pidfile" || fail "proxy ไม่มี pidfile"
+
+# env ตัวอย่างต้องมีคีย์ของโหมด remote
+for k in AVPN_PLATFORM AVPN_REMOTE_PORT AVPN_REMOTE_KEY; do
+  grep -q "^$k=" "$ROOT/config/arena-vpn.env.example" && pass "env ตัวอย่างมี $k" || fail "env ตัวอย่างขาด $k"
+done
+
+# Cloud Shell ต้องไม่ถูก "แก้" ให้รัน server ได้
+grep -q 'no_tun\|HAS_TUN == 0' "$ROOT/arena-vpn" && pass "init ปฏิเสธเครื่องที่ไม่มี TUN อย่างเข้าใจ" || fail "init ไม่ได้ตรวจ TUN แบบใหม่"
+
 # ==============================================================================
 printf '\n%s─────────────────────────────%s\n' $'\033[2m' "$C_Z"
 printf '  ผ่าน %s%d%s   ไม่ผ่าน %s%d%s   ข้าม %s%d%s\n\n' \

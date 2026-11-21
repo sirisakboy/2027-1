@@ -77,7 +77,8 @@ arena-vpn portal open             # URL + รหัสพอร์ทัล
 - 🩺 **`doctor --fix`** — ไล่ซ่อม 5 สาเหตุที่ทำให้ "ต่อไม่ติด" บ่อยที่สุด
 - 🛡️ **ฉุกเฉิน 4 ชั้น** — WG → OpenVPN TCP → SSH พอร์ตสำรอง → Cloud console
 - 💾 **สำรอง/ย้ายเครื่อง** — AES-256 + PBKDF2, ย้ายคลาวด์ใหม่ใน 10 นาที
-- 🌏 **ปรับตามคลาวด์** — preset สำหรับ GCP (MTU 1360), Oracle, AWS
+- 🌏 **ตรวจแพลตฟอร์มเอง** — GCP (MTU 1360) · AWS (IMDSv2) · Oracle (แก้บั๊ก iptables REJECT) · Cloud Shell (โหมดรีโมตคอนโทรล) · เซิร์ฟเวอร์บ้านหลัง NAT/CGNAT
+- 🛰️ **ควบคุม VM จาก Cloud Shell** — `bootstrap` / `remote` / `proxy` (SOCKS5 ผ่าน SSH) แม้เครื่องนั้นไม่มี TUN
 - 🔒 **ปลอดภัยโดยค่าเริ่มต้น** — ปิด IPv6 กัน leak, DNS ในอุโมงค์, tls-crypt, ไฟล์ 600
 - 🧾 **`--json`** ทุกคำสั่ง — ใช้กับสคริปต์/CI ได้
 
@@ -88,7 +89,7 @@ arena-vpn portal open             # URL + รหัสพอร์ทัล
 | [docs/00-ทําไมต้องมี.md](docs/00-ทําไมต้องมี.md) | ทำไมต้อง VPN ของตัวเอง + ข้อจำกัดที่ต้องรู้ |
 | [docs/01-เริ่มต้น.md](docs/01-เริ่มต้น.md) | 15 นาทีแรก: สมัคร → ติดตั้ง → ต่อติด |
 | [docs/02-คำสั่งทั้งหมด.md](docs/02-คำสั่งทั้งหมด.md) | Reference ทุกคำสั่งและตัวแปร |
-| [docs/03-platforms.md](docs/03-platforms.md) | **GCP / Oracle / AWS** ทีละขั้น + กับดัก |
+| [docs/03-platforms.md](docs/03-platforms.md) | **Cloud Shell / GCP / AWS / Oracle / เซิร์ฟเวอร์ส่วนตัว** ทีละขั้น + กับดัก |
 | [docs/04-สถาปัตยกรรม.md](docs/04-สถาปัตยกรรม.md) | ทำไมเลือกแบบนี้ + trade-off |
 | [docs/05-แก้ปัญหา.md](docs/05-แก้ปัญหา.md) | อาการ → สาเหตุ → วิธีแก้ |
 | [docs/06-ความปลอดภัย.md](docs/06-ความปลอดภัย.md) | ป้องกันอะไร ไม่ป้องกันอะไร |

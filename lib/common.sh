@@ -63,6 +63,10 @@ require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] && return 0
   # ในเทสต์/คอนเทนเนอร์ที่ไม่ได้มีสิทธิ์ root ให้ข้ามได้ด้วย AVPN_ALLOW_NONROOT=1
   is_true "${AVPN_ALLOW_NONROOT:-0}" && return 0
+  # Cloud Shell: เป็น root อยู่แล้วโดยปกติ — ถ้าไม่ใช่ ให้บอกชัดเจน
+  if [[ ${CLOUD_SHELL:-} == true ]]; then
+    die "ต้องรันด้วยสิทธิ์ root ใน Cloud Shell: sudo $0 $*"
+  fi
   die "ต้องรันด้วยสิทธิ์ root — ลอง: sudo arena-vpn"
 }
 
@@ -70,7 +74,11 @@ require_cmd() {
   have "$1" || die "ไม่พบคำสั่ง '$1' — ติดตั้งก่อน: apt-get install -y $2"
 }
 
-systemd_available() { [[ -d /run/systemd/system ]]; }
+systemd_available() {
+  [[ -d /run/systemd/system ]] || return 1
+  [[ -d /etc/systemd/system ]] || return 1
+  return 0
+}
 
 # รัน service command; ถ้าไม่มี systemd จะคืนค่า 0 แบบ no-op (container/LXC)
 svc() {
@@ -158,13 +166,13 @@ detect_default_iface() {
     ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1
 }
 
+# หมายเหตุ: ตัวจริงอยู่ใน lib/platform.sh (ตรวจ IMDSv2/Cloud Shell/NAT ครบ)
+# ที่นี่เก็บ stub ไว้กันโค้ดเก่าที่ source common.sh เดี่ยว ๆ พัง
 detect_cloud() {
-  local hdr
-  hdr="$(curl -fsS --max-time 3 -H 'Authorization: Bearer Oracle' \
-    "http://169.254.169.254/opc/v2/instance/" 2>/dev/null)" && [[ -n $hdr ]] && { echo "oracle"; return; }
-  curl -fsS --max-time 2 -H 'Metadata-Flavor: Google' \
-    "http://metadata.google.internal/computeMetadata/v1/instance/id" >/dev/null 2>&1 && { echo "gcp"; return; }
-  curl -fsS --max-time 2 "http://169.254.169.254/latest/meta-data/instance-id" >/dev/null 2>&1 && { echo "aws"; return; }
+  if declare -F detect_platform >/dev/null 2>&1; then
+    detect_platform | sed 's/^selfhosted-nat$/selfhosted/; s/^container$/unknown/'
+    return
+  fi
   echo "unknown"
 }
 
