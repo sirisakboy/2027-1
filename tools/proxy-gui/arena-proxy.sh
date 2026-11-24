@@ -186,31 +186,39 @@ cli_mode() {
   case "$action" in
     on | apply)
       local ip=${1:-127.0.0.1} port=${2:-8080}
-      python3 - "$ip" "$port" <<'PY'
-import sys, arena_proxy_core as core
-ip, port = sys.argv[1], int(sys.argv[2])
+      python3 - "$ip" "$port" "$HOME" <<'PY'
+import sys
+from pathlib import Path
+import arena_proxy_core as core
+ip, port, home = sys.argv[1], int(sys.argv[2]), Path(sys.argv[3])
 st = core.ProxyState(host=ip, port=port, enabled=True)
-for r in core.apply_state(st):
-    print(("✔ " if r.ok else "✖ ") + f"{r.label}: {r.detail}")
+for r in core.apply_state(st, home):
+    print(("OK  " if r.ok else "FAIL ") + f"{r.label}: {r.detail}")
 PY
       ;;
     off | clear)
-      python3 - <<'PY'
+      python3 - "$HOME" <<'PY'
+import sys
+from pathlib import Path
 import arena_proxy_core as core
-for r in core.clear_state():
-    print(("✔ " if r.ok else "✖ ") + f"{r.label}: {r.detail}")
+home = Path(sys.argv[1])
+st = core.load_state(home)
+for r in core.clear_state(st, home):
+    print(("OK  " if r.ok else "FAIL ") + f"{r.label}: {r.detail}")
 PY
       ;;
     status)
-      python3 - <<'PY'
+      python3 - "$HOME" <<'PY'
+import sys
+from pathlib import Path
 import arena_proxy_core as core
-st = core.load_state()
-print(core.describe(st))
+home = Path(sys.argv[1])
+print(core.describe(core.load_state(home)))
 env = core.current_env_proxy()
 if env:
-    print("ตัวแปรในเชลล์นี้:", ", ".join(f"{k}={v}" for k, v in env.items()))
+    print("env:", ", ".join(f"{k}={v}" for k, v in env.items()))
 else:
-    print("ไม่มี http_proxy/https_proxy ในเชลล์นี้ (เปิด terminal ใหม่หลัง Apply)")
+    print("no http_proxy in this shell (open a new terminal after Apply)")
 PY
       ;;
     *)
