@@ -1,0 +1,25 @@
+name: diag
+on: [push, workflow_dispatch]
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: env
+        run: |
+          set +e
+          python3 -V
+          python3 -c "import sys;print('enc',sys.stdout.encoding,'fs',sys.getfilesystemencoding())"
+          python3 -c "import tkinter;print('tkinter OK')" 2>&1 | tail -2
+          echo "::notice::step env done"
+      - name: run-tests-verbose
+        run: |
+          set +e
+          cd tools/proxy-gui
+          python3 tests/test_gui.py > /tmp/out.txt 2>&1
+          rc=$?
+          echo "::notice::rc=$rc lines=$(wc -l < /tmp/out.txt)"
+          # พิมพ์ 30 บรรทัดแรกและ 30 บรรทัดท้ายเป็น annotations
+          head -30 /tmp/out.txt | while IFS= read -r l; do echo "::notice::HEAD $l"; done
+          tail -30 /tmp/out.txt | while IFS= read -r l; do echo "::error::TAIL $l"; done
+          exit 0

@@ -32,8 +32,25 @@ jobs:
           python3 -m py_compile tools/proxy-gui/arena_proxy_core.py \
                                  tools/proxy-gui/arena_proxy_gui.py
 
+      - name: สภาพแวดล้อม Python
+        run: |
+          python3 -V
+          python3 -c "import sys;print('enc:',sys.stdout.encoding,'fs:',sys.getfilesystemencoding())"
+          python3 -c "import tkinter" 2>&1 | head -2 || true
+          python3 -c "import PIL" 2>&1 | head -2 || true
+          python3 -c "import fontTools" 2>&1 | head -2 || true
+          echo "DISPLAY=${DISPLAY:-<ว่าง>}"
+
       - name: เทสต์ Arena Proxy GUI (core + กดปุ่มบน tkinter stub)
-        run: python3 tools/proxy-gui/tests/test_gui.py
+        run: |
+          set +e
+          python3 tools/proxy-gui/tests/test_gui.py 2>&1 | tee /tmp/gui.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # แสดงสาเหตุใน annotations (log ธรรมดาอ่านจากภายนอกไม่ได้)
+            tail -40 /tmp/gui.log | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+          exit "$rc"
 
       - name: Smoke tests
         run: bash tests/run.sh
