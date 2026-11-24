@@ -25,9 +25,10 @@ sys.path.insert(0, str(PKG))
 
 try:
     from PIL import Image, ImageDraw, ImageFont
-except ImportError:
-    sys.stderr.write("ต้องติดตั้ง pillow: pip install pillow\n")
-    raise SystemExit(2)
+    _HAS_PIL = True
+except ImportError:      # CI ไม่มี pillow — ห้าม exit ตอน import (จะฆ่าเทสต์ที่ import ไฟล์นี้)
+    Image = ImageDraw = ImageFont = None  # type: ignore[assignment]
+    _HAS_PIL = False
 
 import tkinter as tk  # stub
 import arena_proxy_gui as gui  # noqa: E402
@@ -143,6 +144,8 @@ _FCACHE: dict = {}
 
 
 def font(size=13, bold=False, mono=False):
+    if not _HAS_PIL:
+        raise RuntimeError("ต้องติดตั้ง pillow: pip install pillow")
     path = FONT_M if mono else (FONT_B if bold else FONT_R)
     key = (path, size)
     if key in _FCACHE:
@@ -462,6 +465,9 @@ def render(state_on: bool, out_path: Path) -> None:
 
 
 def main() -> int:
+    if not _HAS_PIL:
+        sys.stderr.write("ต้องติดตั้ง pillow ก่อน: pip install pillow\n")
+        return 2
     root = tk.Tk()
     ho = Path("/tmp/preview-home")
     (ho / ".config" / "arena-proxy").mkdir(parents=True, exist_ok=True)

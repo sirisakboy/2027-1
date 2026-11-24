@@ -662,8 +662,13 @@ def test_font_fallback() -> None:
     rp = importlib.util.module_from_spec(spec)
     import contextlib
     import io
-    with contextlib.redirect_stderr(io.StringIO()):
-        spec.loader.exec_module(rp)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            spec.loader.exec_module(rp)
+    except BaseException as e:  # noqa: BLE001 — ต้องไม่ฆ่าเทสต์ทั้งชุด
+        ok("import render_preview ได้", False, f"{type(e).__name__}: {e}")
+        return
+    ok("import render_preview ได้", True)
     img = Image.new("RGB", (10, 10))
     d = ImageDraw.Draw(img)
     calls = []
