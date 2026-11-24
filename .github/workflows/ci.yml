@@ -25,7 +25,15 @@ jobs:
           for f in lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh; do bash -n "$f"; done
 
       - name: ShellCheck (ระดับ error ต้องผ่าน)
-        run: shellcheck -x -S error arena-vpn lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh
+        run: shellcheck -x -S error arena-vpn lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh tools/proxy-gui/*.sh
+
+      - name: ตรวจ syntax Python (Arena Proxy GUI)
+        run: |
+          python3 -m py_compile tools/proxy-gui/arena_proxy_core.py \
+                                 tools/proxy-gui/arena_proxy_gui.py
+
+      - name: เทสต์ Arena Proxy GUI (core + กดปุ่มบน tkinter stub)
+        run: python3 tools/proxy-gui/tests/test_gui.py
 
       - name: Smoke tests
         run: bash tests/run.sh
