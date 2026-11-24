@@ -59,7 +59,18 @@ jobs:
           exit "$rc"
 
       - name: Smoke tests
-        run: bash tests/run.sh
+        run: |
+          set +e
+          bash tests/run.sh 2>&1 | tee /tmp/smoke.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::smoke tests failed rc=$rc"
+            grep -E "✖|Traceback|Error|ผ่าน |ข้าม" /tmp/smoke.log | head -10 | while IFS= read -r l; do
+              echo "::error::${l:0:400}"
+            done
+            echo "::error::LAST: $(tail -3 /tmp/smoke.log | head -1 | cut -c1-300)"
+          fi
+          exit "$rc"
 
       - name: ตรวจว่าไม่มีไฟล์ลับหลุดเข้า repo
         run: |
