@@ -45,6 +45,31 @@ sudo arena-vpn peer add phone && sudo arena-vpn peer qr phone
 วาง [`cloud-init.yaml`](cloud-init.yaml) ในช่อง **User data** ตอนสร้างเครื่อง
 แล้วรอ 3–5 นาที — ระบบจะติดตั้งเองทั้งหมด รหัสพอร์ทัลอยู่ใน `/root/arena-vpn-portal.txt`
 
+## Arena Proxy GUI — ตั้ง proxy ทั้งเครื่องบน Kali ในคลิกเดียว
+
+![Arena Proxy](docs/images/proxy-gui-on.png)
+
+ปัญหาจริง: ตั้ง proxy บน Kali ต้องแก้ `gsettings` + `xfconf` + `http_proxy` + `apt` + Firefox
+พร้อมกัน — พิมพ์ผิดที่เดียวก็พัง
+
+```bash
+cd tools/proxy-gui
+bash arena-proxy.sh --check     # ตรวจว่าขาดอะไร
+bash arena-proxy.sh --install   # เพิ่มลงเมนู "Arena Proxy"
+bash arena-proxy.sh             # หรือเปิดตรง ๆ
+```
+
+หน้าจอ: **IP · Port · Apply · Sync from Firefox · สวิตช์ ON/OFF**
+
+| ปุ่ม | ทำอะไร |
+|---|---|
+| **Apply** | ตั้ง `gsettings org.gnome.system.proxy` + xfconf (Kali=XFCE) + เขียน `http_proxy`/`https_proxy` ลง rc + apt (ถ้า root) |
+| **Sync from Firefox** | อ่าน `prefs.js`/`user.js` ของทุกโปรไฟล์ (apt/snap/flatpak) มาเติมช่องให้ |
+| **OFF** | `mode none` + `unset` + **คืนค่า gsettings เดิม** จาก snapshot |
+
+> **ต้องเปิด terminal ใหม่** หลัง Apply — ตัวแปรของเชลล์ที่เปิดอยู่แก้จากข้างนอกไม่ได้
+> รายละเอียดทั้งหมด: [docs/10-proxy-gui.md](docs/10-proxy-gui.md)
+
 ## ภาพรวมระบบ
 
 ```
@@ -78,6 +103,7 @@ arena-vpn portal open             # URL + รหัสพอร์ทัล
 - 🛡️ **ฉุกเฉิน 4 ชั้น** — WG → OpenVPN TCP → SSH พอร์ตสำรอง → Cloud console
 - 💾 **สำรอง/ย้ายเครื่อง** — AES-256 + PBKDF2, ย้ายคลาวด์ใหม่ใน 10 นาที
 - 🌏 **ตรวจแพลตฟอร์มเอง** — GCP (MTU 1360) · AWS (IMDSv2) · Oracle (แก้บั๊ก iptables REJECT) · Cloud Shell (โหมดรีโมตคอนโทรล) · เซิร์ฟเวอร์บ้านหลัง NAT/CGNAT
+- 🖥️ **Arena Proxy GUI (Kali)** — หน้าต่าง Tkinter: IP · Port · Apply · Sync จาก Firefox · ON/OFF ตั้ง gsettings + http_proxy ทั้งเครื่อง
 - 🛰️ **ควบคุม VM จาก Cloud Shell** — `bootstrap` / `remote` / `proxy` (SOCKS5 ผ่าน SSH) แม้เครื่องนั้นไม่มี TUN
 - 🔒 **ปลอดภัยโดยค่าเริ่มต้น** — ปิด IPv6 กัน leak, DNS ในอุโมงค์, tls-crypt, ไฟล์ 600
 - 🧾 **`--json`** ทุกคำสั่ง — ใช้กับสคริปต์/CI ได้
@@ -96,6 +122,7 @@ arena-vpn portal open             # URL + รหัสพอร์ทัล
 | [docs/07-ฉุกเฉิน.md](docs/07-ฉุกเฉิน.md) | คู่มือวันที่ทุกอย่างพัง |
 | [docs/08-สํารองและย้ายเครื่อง.md](docs/08-สํารองและย้ายเครื่อง.md) | backup/restore/ย้ายคลาวด์ |
 | [docs/09-ตัดสินใจออกแบบ.md](docs/09-ตัดสินใจออกแบบ.md) | ADR: ทำไมเลือกแบบนี้ + roadmap |
+| [docs/10-proxy-gui.md](docs/10-proxy-gui.md) | **Arena Proxy GUI** — ตั้ง proxy ทั้งเครื่อง Kali (gsettings + http_proxy + ON/OFF + Sync จาก Firefox) |
 
 ## โครงสร้างโปรเจกต์
 
@@ -112,15 +139,17 @@ lib/
   portal.sh                ติดตั้งพอร์ทัล (busybox httpd + stunnel)
   doctor.sh                ตรวจ/ซ่อม
   backup.sh                สำรอง/กู้คืน
+  platform.sh              ตรวจแพลตฟอร์ม (Cloud Shell/GCP/AWS/Oracle/บ้าน)
+  remote.sh                bootstrap/remote/proxy จาก Cloud Shell
 portal/
   www/index.html           หน้าเว็บ (single-page, ไม่มี dependency)
   bin/api.sh               CGI backend (bash)
 config/arena-vpn.env.example
-docs/                      คู่มือภาษาไทย 10 ไฟล์ (ตามสถานการณ์)
+docs/                      คู่มือภาษาไทย 11 ไฟล์ (ตามสถานการณ์)
 cloud-init.yaml            ติดตั้งอัตโนมัติตอนสร้าง VM
 tools/port-check.sh        ตรวจพอร์ตจากภายนอก
-tests/                     smoke tests + dev portal
-tests/                     smoke tests (รันได้โดยไม่ต้องมี VPN)
+tools/proxy-gui/           Arena Proxy GUI (Tkinter) สำหรับ Kali
+tests/                     smoke tests (รันได้โดยไม่ต้องมี VPN) + dev portal
 ```
 
 ## พัฒนา / ทดสอบ

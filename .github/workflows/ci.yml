@@ -25,10 +25,52 @@ jobs:
           for f in lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh; do bash -n "$f"; done
 
       - name: ShellCheck (ระดับ error ต้องผ่าน)
-        run: shellcheck -x -S error arena-vpn lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh
+        run: shellcheck -x -S error arena-vpn lib/*.sh portal/bin/api.sh tests/run.sh tools/*.sh tools/proxy-gui/*.sh
+
+      - name: ตรวจ syntax Python (Arena Proxy GUI)
+        run: |
+          python3 -m py_compile tools/proxy-gui/arena_proxy_core.py \
+                                 tools/proxy-gui/arena_proxy_gui.py
+
+      - name: สภาพแวดล้อม Python
+        run: |
+          python3 -V
+          python3 -c "import sys;print('enc:',sys.stdout.encoding,'fs:',sys.getfilesystemencoding())"
+          python3 -c "import tkinter" 2>&1 | head -2 || true
+          python3 -c "import PIL" 2>&1 | head -2 || true
+          python3 -c "import fontTools" 2>&1 | head -2 || true
+          echo "DISPLAY=${DISPLAY:-<ว่าง>}"
+
+      - name: เทสต์ Arena Proxy GUI (core + กดปุ่มบน tkinter stub)
+        run: |
+          set +e
+          python3 tools/proxy-gui/tests/test_gui.py 2>&1 | tee /tmp/gui.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # สรุปสั้น ๆ เป็น annotation (GitHub จำกัดจำนวน/ความยาว)
+            echo "::error::GUI tests failed rc=$rc"
+            grep -E "✖|Traceback|Error|RESULT|skipped" /tmp/gui.log | head -8 | while IFS= read -r l; do
+              echo "::error::${l:0:400}"
+            done
+            # จุดที่หยุด: บรรทัดสุดท้ายของ output
+            echo "::error::LAST: $(tail -1 /tmp/gui.log | cut -c1-300)"
+            echo "::error::SECOND_LAST: $(tail -2 /tmp/gui.log | head -1 | cut -c1-300)"
+          fi
+          exit "$rc"
 
       - name: Smoke tests
-        run: bash tests/run.sh
+        run: |
+          set +e
+          bash tests/run.sh 2>&1 | tee /tmp/smoke.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::smoke tests failed rc=$rc"
+            grep -E "✖|Traceback|Error|ผ่าน |ข้าม" /tmp/smoke.log | head -10 | while IFS= read -r l; do
+              echo "::error::${l:0:400}"
+            done
+            echo "::error::LAST: $(tail -3 /tmp/smoke.log | head -1 | cut -c1-300)"
+          fi
+          exit "$rc"
 
       - name: ตรวจว่าไม่มีไฟล์ลับหลุดเข้า repo
         run: |

@@ -446,6 +446,41 @@ done
 grep -q 'no_tun\|HAS_TUN == 0' "$ROOT/arena-vpn" && pass "init ปฏิเสธเครื่องที่ไม่มี TUN อย่างเข้าใจ" || fail "init ไม่ได้ตรวจ TUN แบบใหม่"
 
 # ==============================================================================
+group "17. Arena Proxy GUI (Kali)"
+
+for f in arena_proxy_core.py arena_proxy_gui.py arena-proxy.sh; do
+  [[ -s "$ROOT/tools/proxy-gui/$f" ]] && pass "มีไฟล์ $f" || fail "ขาดไฟล์ $f"
+done
+for f in arena_proxy_core.py arena_proxy_gui.py; do
+  python3 -m py_compile "$ROOT/tools/proxy-gui/$f" 2>/dev/null \
+    && pass "$f compile ผ่าน" || fail "$f compile ไม่ผ่าน"
+done
+[[ -x "$ROOT/tools/proxy-gui/arena-proxy.sh" ]] && pass "arena-proxy.sh รันได้" || fail "arena-proxy.sh ไม่มีสิทธิ์รัน"
+
+# CLI ต้องทำงานได้โดยไม่ต้องมีจอ
+OUT=$(cd "$ROOT/tools/proxy-gui" && HOME="$WORK/proxyhome" bash arena-proxy.sh --version 2>&1)
+[[ $OUT == *"arena-proxy 1.0.0"* ]] && pass "--version ตอบถูก" || fail "--version ผิด: $OUT"
+OUT=$(cd "$ROOT/tools/proxy-gui" && HOME="$WORK/proxyhome" bash arena-proxy.sh --cli status 2>&1)
+[[ $OUT == *"ปิดอยู่"* || $OUT == *"เปิด"* ]] && pass "--cli status ทำงาน" || fail "--cli status: $OUT"
+# apply/off ต้องไม่พังเมื่อไม่มี gsettings (แซนด์บ็อกซ์)
+mkdir -p "$WORK/proxyhome"
+(cd "$ROOT/tools/proxy-gui" && HOME="$WORK/proxyhome" bash arena-proxy.sh --cli on 10.9.9.9 3128 >/dev/null 2>&1)
+[[ -f "$WORK/proxyhome/.config/arena-proxy/env.sh" ]] && pass "--cli on เขียน env.sh" || fail "--cli on ไม่เขียน env.sh"
+grep -q "export http_proxy='http://10.9.9.9:3128'" "$WORK/proxyhome/.config/arena-proxy/env.sh" \
+  && pass "env.sh มี http_proxy ที่ถูกต้อง" || fail "env.sh ผิด: $(head -4 "$WORK/proxyhome/.config/arena-proxy/env.sh" 2>/dev/null)"
+(cd "$ROOT/tools/proxy-gui" && HOME="$WORK/proxyhome" bash arena-proxy.sh --cli off >/dev/null 2>&1)
+grep -q "unset http_proxy" "$WORK/proxyhome/.config/arena-proxy/env.sh" \
+  && pass "--cli off เปลี่ยนเป็น unset" || fail "--cli off ไม่ทำงาน"
+
+# ชุดเทสต์ของ GUI เอง (174 checks)
+if python3 "$ROOT/tools/proxy-gui/tests/test_gui.py" >"$WORK/gui.log" 2>&1; then
+  GN=$(sed -n 's/^RESULT pass=\([0-9]*\) fail=.*/\1/p' "$WORK/gui.log" | tail -1)
+  pass "ชุดเทสต์ GUI ผ่านทั้งหมด ($GN checks)"
+else
+  fail "ชุดเทสต์ GUI ไม่ผ่าน" "$(tail -5 "$WORK/gui.log")"
+fi
+
+# ==============================================================================
 printf '\n%s─────────────────────────────%s\n' $'\033[2m' "$C_Z"
 printf '  ผ่าน %s%d%s   ไม่ผ่าน %s%d%s   ข้าม %s%d%s\n\n' \
   "$C_OK" "$PASS" "$C_Z" "$C_NO" "$FAIL" "$C_Z" "$C_SK" "$SKIP" "$C_Z"
