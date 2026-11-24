@@ -35,6 +35,7 @@ import arena_proxy_gui as gui           # noqa: E402
 
 PASS = 0
 FAIL = 0
+SKIP = 0
 FAILS: list[str] = []
 
 
@@ -47,6 +48,12 @@ def ok(name: str, cond: bool, detail: str = "") -> None:
         FAIL += 1
         FAILS.append(f"{name} :: {detail}")
         print(f"  \033[31m✖\033[0m {name}" + (f"\n      {detail}" if detail else ""))
+
+
+def skip(name: str) -> None:
+    global SKIP
+    SKIP += 1
+    print(f"  \033[33m○\033[0m {name} (ข้าม)")
 
 
 def eq(name: str, got, want, extra: str = "") -> None:
@@ -649,7 +656,7 @@ def test_font_fallback() -> None:
     try:
         from PIL import Image, ImageDraw, ImageFont  # noqa: F401
     except ImportError:
-        skip("pillow ไม่มี — ข้ามการทดสอบเรนเดอร์จริง")
+        skip("เรนเดอร์ภาพจริง (ต้องมี pillow: pip install pillow)")
         return
     spec = importlib.util.spec_from_file_location("rp_test", rp_path)
     rp = importlib.util.module_from_spec(spec)
@@ -734,13 +741,13 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
         print("\n\033[31mเทสต์หยุดกลางทาง (exception)\033[0m")
-        print(f"RESULT pass={PASS} fail={FAIL + 1}")
+        print(f"RESULT pass={PASS} fail={FAIL + 1} skip={SKIP}")
         return 1
 
     print("\n" + "─" * 46)
     color = "\033[32m" if FAIL == 0 else "\033[31m"
     print(f"  ผ่าน {color}{PASS}\033[0m   ไม่ผ่าน \033[31m{FAIL}\033[0m")
-    print(f"RESULT pass={PASS} fail={FAIL}")   # บรรทัดเ��รื่องจักรอ่าน (ไม่มีสี)
+    print(f"RESULT pass={PASS} fail={FAIL} skip={SKIP}")   # บรรทัดเครื่องจักรอ่าน (ไม่มีสี)
     if FAILS:
         print("\nรายการที่ไม่ผ่าน:")
         for f in FAILS:
