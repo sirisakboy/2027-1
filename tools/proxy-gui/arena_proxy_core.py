@@ -48,12 +48,22 @@ RC_MARK_END = "# <<< arena-proxy <<<"
 
 # ─────────────────────────────────────────────────────────── paths ──
 def config_dir(home: Path | None = None) -> Path:
-    home = Path(home or Path.home())
+    """ไดเรกทอรี config
+
+    กฎ: ถ้าผู้เรียกระบุ home เอง (เช่นเทสต์) ต้องใช้ค่านั้นเสมอ
+    ห้ามให้ XDG_CONFIG_HOME ของ environment มาทับ — ไม่งั้นเทสต์ที่แยก home
+    จะไปเขียนทับ config จริงของผู้ใช้/ของ run อื่น (เจอบน CI)
+    """
+    if home is not None:
+        return Path(home) / ".config" / APP
+    home = Path.home()
     return Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / APP
 
 
 def state_dir(home: Path | None = None) -> Path:
-    home = Path(home or Path.home())
+    if home is not None:
+        return Path(home) / ".cache" / APP
+    home = Path.home()
     return Path(os.environ.get("XDG_CACHE_HOME") or home / ".cache") / APP
 
 

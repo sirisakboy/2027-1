@@ -307,6 +307,35 @@ def test_core():
         (core.config_path(home)).write_text('{"host":"1.1.1.1","port":9,"มั่ว":"x"}')
         eq("คีย์ที่ไม่รู้จักถูกทิ้ง", core.load_state(home).host, "1.1.1.1")
 
+    group("10b. home ที่ผู้เรียกส่งมา ต้องชนะ XDG_CONFIG_HOME (บั๊กที่เจอบน CI)")
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        old = {k: os.environ.get(k) for k in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME")}
+        try:
+            os.environ["XDG_CONFIG_HOME"] = "/tmp/arena-xdg-should-be-ignored"
+            os.environ["XDG_CACHE_HOME"] = "/tmp/arena-xdg-should-be-ignored"
+            ok("config_path(home) อยู่ใน home ที่ระบุ",
+               str(core.config_path(home)).startswith(str(home)), str(core.config_path(home)))
+            ok("env_sh_path(home) อยู่ใน home ที่ระบุ",
+               str(core.env_sh_path(home)).startswith(str(home)), str(core.env_sh_path(home)))
+            ok("snapshot_path(home) อยู่ใน home ที่ระบุ",
+               str(core.snapshot_path(home)).startswith(str(home)), str(core.snapshot_path(home)))
+
+            # ต้องไม่ทิ้งขยะไว้นอก home
+            core.save_state(core.ProxyState(host="1.2.3.4", port=8080, enabled=True), home)
+            ok("save_state ไม่เขียนลง XDG",
+               not Path("/tmp/arena-xdg-should-be-ignored").exists(),
+               "พบไฟล์หลุดออกนอก home")
+            ok("โหลดกลับมาได้จาก home ที่ระบุ",
+               core.load_state(home).host == "1.2.3.4")
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
     group("11. apply / clear (ดักคำสั่งทั้งหมด)")
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -415,6 +444,18 @@ def test_core():
         eq("dry-run ไม่เขียน rc", (home / ".profile").exists(), False)
         ok("dry-run คืนผลว่าผ่าน", all(r.ok for r in res), str(res))
         eq("dry-run ไม่ยิงคำสั่งภายนอก", len(sysc.calls), 0)
+        # เขียนทับ environment ให้ชี้ที่อื่น — ต้องยังไม่แตะดิสก์
+        old = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = str(Path(td) / "xdg")
+        try:
+            core.apply_state(core.ProxyState(host="9.9.9.9", port=1080), home, dry_run=True)
+            eq("dry-run ไม่เขียนลง XDG ด้วย",
+               (Path(td) / "xdg").exists(), False)
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
 
 
 # ───────────────────────────────── B) GUI ──
